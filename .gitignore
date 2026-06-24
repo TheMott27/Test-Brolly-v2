@@ -3,3 +3,6 @@ node_modules/
 settings/node_modules/
 settings/dist/
 *.pbw
+settings/
+resources/
+.lock-waf_linux_build
