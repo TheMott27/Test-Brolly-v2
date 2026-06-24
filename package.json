@@ -1,0 +1,382 @@
+{
+  "name": "brolly",
+  "version": "2.0.0",
+  "author": "mrjamieraymusic",
+  "keywords": [
+    "pebble-app"
+  ],
+  "pebble": {
+    "sdkVersion": "3",
+    "displayName": "Brolly",
+    "uuid": "b4e7c2a1-9f3d-4e8b-a6c5-d2f1e0b3a7c9",
+    "shortName": "Brolly",
+    "longName": "Brolly v2.0.04",
+    "companyName": "mrjamieraymusic",
+    "versionLabel": "2.0.0",
+    "watchapp": {
+      "watchface": true
+    },
+    "enableMultiJS": true,
+    "resources": {
+      "media": [
+        {
+          "type": "font",
+          "name": "FONT_DIGITAL_18",
+          "file": "fonts/DSEG7Classic-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_DIGITAL_22",
+          "file": "fonts/DSEG7Classic-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_DIGITAL_26",
+          "file": "fonts/DSEG7Classic-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_DIGITAL_30",
+          "file": "fonts/DSEG7Classic-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_DIGITAL_36",
+          "file": "fonts/DSEG7Classic-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_STANDARD_18",
+          "file": "fonts/Roboto-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_STANDARD_22",
+          "file": "fonts/Roboto-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_STANDARD_26",
+          "file": "fonts/Roboto-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_STANDARD_30",
+          "file": "fonts/Roboto-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_STANDARD_36",
+          "file": "fonts/Roboto-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_TRADITIONAL_18",
+          "file": "fonts/Lora-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_TRADITIONAL_22",
+          "file": "fonts/Lora-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_TRADITIONAL_26",
+          "file": "fonts/Lora-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_TRADITIONAL_30",
+          "file": "fonts/Lora-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_TRADITIONAL_36",
+          "file": "fonts/Lora-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_THIN_18",
+          "file": "fonts/Raleway-Light.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_THIN_22",
+          "file": "fonts/Raleway-Light.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_THIN_26",
+          "file": "fonts/Raleway-Light.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_THIN_30",
+          "file": "fonts/Raleway-Light.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_THIN_36",
+          "file": "fonts/Raleway-Light.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_OVERSIZE_18",
+          "file": "fonts/Oswald-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_OVERSIZE_22",
+          "file": "fonts/Oswald-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_OVERSIZE_26",
+          "file": "fonts/Oswald-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_OVERSIZE_30",
+          "file": "fonts/Oswald-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        },
+        {
+          "type": "font",
+          "name": "FONT_OVERSIZE_36",
+          "file": "fonts/Oswald-Regular.ttf",
+          "characterRegex": "[0-9]",
+          "compatibility": "2.7",
+          "targetPlatforms": [
+            "basalt",
+            "emery"
+          ]
+        }
+      ]
+    },
+    "targetPlatforms": [
+      "aplite",
+      "basalt",
+      "emery"
+    ],
+    "capabilities": [
+      "location",
+      "configurable"
+    ],
+    "messageKeys": {
+      "KEY_ICON_0": 0,
+      "KEY_ICON_1": 1,
+      "KEY_ICON_2": 2,
+      "KEY_ICON_3": 3,
+      "KEY_ICON_4": 4,
+      "KEY_ICON_5": 5,
+      "KEY_ICON_6": 6,
+      "KEY_ICON_7": 7,
+      "KEY_ICON_8": 8,
+      "KEY_ICON_9": 9,
+      "KEY_ICON_10": 10,
+      "KEY_ICON_11": 11,
+      "KEY_ICON_12": 12,
+      "KEY_ICON_13": 13,
+      "KEY_ICON_14": 14,
+      "KEY_ICON_15": 15,
+      "KEY_ICON_16": 16,
+      "KEY_ICON_17": 17,
+      "KEY_ICON_18": 18,
+      "KEY_ICON_19": 19,
+      "KEY_ICON_20": 20,
+      "KEY_ICON_21": 21,
+      "KEY_ICON_22": 22,
+      "KEY_ICON_23": 23,
+      "KEY_SUNRISE_HOUR": 25,
+      "KEY_SUNRISE_MINUTE": 26,
+      "KEY_SUNSET_HOUR": 27,
+      "KEY_SUNSET_MINUTE": 28,
+      "KEY_BT_DISCONNECT_MIN_INNER_RED": 53,
+      "KEY_VIBRATE_BT_DISCONNECT": 54,
+      "KEY_VIBRATE_BT_RECONNECT": 55,
+      "KEY_TEMP_C": 58,
+      "KEY_TEMP_F": 59,
+      "KEY_SHAKE_MODE": 107,
+      "KEY_TEMP_UNIT": 110,
+      "KEY_CUSTOM_LOCATION": 113,
+      "KEY_HOUR_HAND_OUTER": 114,
+      "KEY_HOUR_HAND_INNER": 115,
+      "KEY_MIN_HAND_OUTER": 116,
+      "KEY_MIN_HAND_INNER": 117,
+      "KEY_DATE_VISIBLE": 118,
+      "KEY_TEMP_VISIBLE": 119,
+      "KEY_NUMBER_FONT": 121,
+      "KEY_BACKGROUND_COLOR": 126,
+      "KEY_NUMBER_COLOR": 127,
+      "KEY_ICON_COLOR": 128,
+      "KEY_HOUR_MARKER_COLOR": 129,
+      "KEY_MINUTE_MARKER_COLOR": 130,
+      "KEY_CENTER_DOT_50_COLOR": 131,
+      "KEY_CENTER_DOT_20_COLOR": 132,
+      "KEY_MIDDLE_RING_20_COLOR": 133,
+      "KEY_DATE_COLOR": 134,
+      "KEY_TEMP_COLOR": 135,
+      "KEY_BT_DISCONNECT_OUTER_COLOR": 136,
+      "KEY_BT_DISCONNECT_INNER_COLOR": 137,
+      "KEY_BATTERY_RING_THRESHOLD": 138,
+      "KEY_BATTERY_CENTER_THRESHOLD": 139,
+      "KEY_SECONDS_HAND_COLOR": 141,
+      "KEY_SECONDS_HAND_MODE": 142,
+      "KEY_SECONDS_SHAKE_DUR": 143,
+      "KEY_TEST_BATTERY_ALERT": 144,
+      "KEY_TEST_BT_DISCONNECT": 145,
+      "KEY_SUNRISE_MARKER_VISIBLE": 147,
+      "KEY_SUNRISE_MARKER_COLOR": 148,
+      "KEY_SUNSET_MARKER_COLOR": 149,
+      "KEY_NUMBER_SIZE": 150,
+      "KEY_ICON_SIZE": 151,
+      "KEY_ICON_COLOR_MODE": 153,
+      "KEY_OWM_API_KEY": 156,
+      "KEY_DISPLAY_MODE": 158
+    },
+    "configureUrl": "https://themott27.github.io/Test-Brolly-v2/"
+  }
+}

@@ -1,0 +1,1300 @@
+// Brolly v2.0.0 — main.c
+// Complete watchface implementation for Pebble (Aplite/Basalt/Emery)
+
+#include <pebble.h>
+#include "gpath_weather.h"
+#include <stdlib.h>
+
+// Integer square root (avoids float sqrt and math.h dependency)
+static int isqrt_int(int n) {
+  if (n <= 0) return 0;
+  int x = n;
+  int y = (x + 1) / 2;
+  while (y < x) { x = y; y = (x + n / x) / 2; }
+  return x;
+}
+
+// Forward declaration
+static void tick_handler(struct tm *tick_time, TimeUnits units_changed);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Design constants & scaling
+// ─────────────────────────────────────────────────────────────────────────────
+#define DESIGN_W 144
+#define DESIGN_H 168
+
+static int s_screen_w = 144;
+static int s_screen_h = 168;
+
+static inline int POS_X(int px) { return (px * s_screen_w) / DESIGN_W; }
+static inline int POS_Y(int py) { return (py * s_screen_h) / DESIGN_H; }
+
+#ifdef PBL_COLOR
+  #define MONO_COLOR(c) (c)
+#else
+  #define MONO_COLOR(c) (gcolor_equal((c), GColorBlack) ? GColorBlack : GColorWhite)
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Persist keys
+// ─────────────────────────────────────────────────────────────────────────────
+#define PERSIST_ICONS    0
+#define PERSIST_SETTINGS 1
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AppMessage inbox/outbox sizes
+// ─────────────────────────────────────────────────────────────────────────────
+#define APP_MSG_INBOX_SIZE  512
+#define APP_MSG_OUTBOX_SIZE  64
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shake / seconds timings
+// ─────────────────────────────────────────────────────────────────────────────
+#define SHAKE_DISPLAY_MS  5000
+#define SHAKE_DELAY_MS     500
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hand geometry constants
+// ─────────────────────────────────────────────────────────────────────────────
+#define FIXED_HAND_BASE_WIDTH   3
+#define FIXED_HAND_OUTER_WIDTH  6
+#define FIXED_HAND_INNER_WIDTH  2
+#define FIXED_HAND_BASE_PX     20
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Settings structure
+// ─────────────────────────────────────────────────────────────────────────────
+typedef struct {
+  // Background
+  GColor background_color;
+  // Hour markers
+  bool   display_hour_markers;
+  GColor hour_marker_color;
+  // Minute markers
+  bool   display_minor_markers;
+  GColor minute_marker_color;
+  // Numbers
+  uint8_t number_font;    // 0=Digital 1=Standard 2=Traditional 3=Thin 4=Oversize
+  uint8_t number_size;    // 1–5 → {18,22,26,30,36}
+  GColor  number_color;
+  // Icons
+  uint8_t icon_size;      // 1–5 → {16,24,32,40,48}
+  GColor  icon_color;
+  // Watch hands
+  GColor hour_hand_outer;
+  GColor hour_hand_inner;
+  GColor min_hand_outer;
+  GColor min_hand_inner;
+  // Seconds hand
+  GColor  seconds_hand_color;
+  uint8_t seconds_hand_mode;   // 0=Never 1=Always 2=Shake
+  uint8_t seconds_shake_dur;   // seconds (default 10)
+  // Date / temperature
+  uint8_t date_visible;   // 0=Always 1=Off 2=Shake
+  uint8_t temp_visible;   // 0=Always 1=Off 2=Shake
+  uint8_t display_mode;   // 0=Both 1=Temp 2=Date 3=None
+  uint8_t temp_unit;      // 0=C 1=F
+  GColor  date_color;
+  GColor  temp_color;
+  // Battery ring
+  uint8_t battery_ring_threshold;    // 0=off,50,40,30,20,10
+  uint8_t battery_center_threshold;  // 0=off,20,10,5
+  // Sunrise/sunset markers
+  uint8_t sunrise_marker_visible;    // 0=Always 1=Only with icons 2=Off
+  GColor  sunrise_marker_color;
+  GColor  sunset_marker_color;
+  // Bluetooth
+  bool   vibrate_bt_disconnect;
+  bool   vibrate_bt_reconnect;
+  bool   bt_disconnect_min_inner_red;
+  GColor bt_disconnect_outer_color;
+  GColor bt_disconnect_inner_color;
+  // Shake mode (for icons)
+  uint8_t shake_mode;   // 0=Show on shake 1=Always show 2=Always hide
+} Settings;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Global state
+// ─────────────────────────────────────────────────────────────────────────────
+static Window   *s_window;
+static Layer    *s_bg_layer;
+static Layer    *s_complication_layer;
+static Layer    *s_hour_layer;
+static Layer    *s_minute_layer;
+static Layer    *s_seconds_layer;
+
+static Settings  s_settings;
+static int8_t    s_icons[24];
+static int8_t    s_temp_c = 0;
+static int8_t    s_temp_f = 32;
+static int8_t    s_sunrise_hour = 6,  s_sunrise_min = 0;
+static int8_t    s_sunset_hour  = 18, s_sunset_min  = 0;
+
+static struct tm s_last_time;
+static bool      s_bt_connected = true;
+static uint8_t   s_battery_pct  = 100;
+
+// Marker cache
+static GPoint s_min_marker_outer[60];
+static GPoint s_min_marker_inner[60];
+static GPoint s_hour_marker_outer[12];
+static GPoint s_hour_marker_inner[12];
+
+// Font cache
+static GFont s_cached_number_font = NULL;
+static uint8_t s_cached_font_id   = 255;
+static uint8_t s_cached_font_size  = 255;
+
+// Shake / icon display state
+static bool     s_showing_icons   = false;
+static AppTimer *s_shake_timer     = NULL;
+static AppTimer *s_shake_delay_timer = NULL;
+
+// Seconds visibility
+static bool     s_seconds_visible = false;
+static AppTimer *s_seconds_timer   = NULL;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Convert 0xRRGGBB integer to GColor
+static GColor rgb_to_gcolor(int32_t rgb) {
+  return GColorFromRGB((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
+}
+
+// Polar to point (clock-hand angle, 12 o'clock = 0)
+static GPoint polar_to_point(GPoint center, int32_t angle, int radius) {
+  return GPoint(
+    center.x + (int)(sin_lookup(angle) * radius / TRIG_MAX_RATIO),
+    center.y - (int)(cos_lookup(angle) * radius / TRIG_MAX_RATIO)
+  );
+}
+
+// Square perimeter point: where a ray from center at angle hits the rect boundary
+// margin_x / margin_y inset the boundary
+static GPoint square_perimeter_point(GPoint center, int32_t angle, int margin_x, int margin_y) {
+  int hw = s_screen_w / 2 - margin_x;
+  int hh = s_screen_h / 2 - margin_y;
+
+  int32_t sin_a = sin_lookup(angle);
+  int32_t cos_a = cos_lookup(angle);
+
+  // Avoid division by zero
+  if (sin_a == 0 && cos_a == 0) return center;
+
+  // Scale to find intersection with rectangle
+  int32_t t_x = (sin_a != 0) ? (hw * TRIG_MAX_RATIO / abs(sin_a)) : INT32_MAX;
+  int32_t t_y = (cos_a != 0) ? (hh * TRIG_MAX_RATIO / abs(cos_a)) : INT32_MAX;
+  int32_t t   = (t_x < t_y) ? t_x : t_y;
+
+  return GPoint(
+    center.x + (int)(sin_a * t / TRIG_MAX_RATIO),
+    center.y - (int)(cos_a * t / TRIG_MAX_RATIO)
+  );
+}
+
+// Angle for a clock position (minutes 0–59 or hours 0–11 scaled)
+static int32_t angle_for_minute(int minute) {
+  return TRIG_MAX_ANGLE * minute / 60;
+}
+
+static int32_t angle_for_hour(int hour, int minute) {
+  return TRIG_MAX_ANGLE * (hour * 60 + minute) / 720;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Marker cache computation
+// ─────────────────────────────────────────────────────────────────────────────
+static void compute_markers(void) {
+  GPoint center = GPoint(s_screen_w / 2, s_screen_h / 2);
+  bool is_emery = (s_screen_w >= 200);
+
+  for (int i = 0; i < 60; i++) {
+    int32_t angle = angle_for_minute(i);
+    bool is_quarter = (i == 7 || i == 23 || i == 37 || i == 53);
+    int marker_len;
+    if (is_emery) {
+      marker_len = is_quarter ? 10 : 4;
+    } else {
+      marker_len = is_quarter ? 4 : 2;
+    }
+    GPoint outer = square_perimeter_point(center, angle, 0, 0);
+    // Inner: move marker_len pixels toward center
+    int dx = center.x - outer.x;
+    int dy = center.y - outer.y;
+    int dist = isqrt_int(dx*dx + dy*dy);
+    GPoint inner;
+    if (dist > 0) {
+      inner = GPoint(outer.x + dx * marker_len / dist,
+                     outer.y + dy * marker_len / dist);
+    } else {
+      inner = outer;
+    }
+    s_min_marker_outer[i] = outer;
+    s_min_marker_inner[i] = inner;
+  }
+
+  for (int i = 0; i < 12; i++) {
+    int32_t angle = TRIG_MAX_ANGLE * i / 12;
+    GPoint outer = square_perimeter_point(center, angle, 0, 0);
+    int dx = center.x - outer.x;
+    int dy = center.y - outer.y;
+    int dist = isqrt_int(dx*dx + dy*dy);
+    GPoint inner;
+    if (dist > 0) {
+      inner = GPoint(outer.x + dx * 2 / dist,
+                     outer.y + dy * 2 / dist);
+    } else {
+      inner = outer;
+    }
+    s_hour_marker_outer[i] = outer;
+    s_hour_marker_inner[i] = inner;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Font loading
+// ─────────────────────────────────────────────────────────────────────────────
+static const int s_font_sizes[5] = {18, 22, 26, 30, 36};
+
+static uint32_t get_font_resource_id(uint8_t font_id, uint8_t size_idx) {
+#ifdef PBL_PLATFORM_APLITE
+  return 0; // Use system font on Aplite
+#else
+  static const uint32_t font_resources[5][5] = {
+    // Digital
+    { RESOURCE_ID_FONT_DIGITAL_18, RESOURCE_ID_FONT_DIGITAL_22,
+      RESOURCE_ID_FONT_DIGITAL_26, RESOURCE_ID_FONT_DIGITAL_30,
+      RESOURCE_ID_FONT_DIGITAL_36 },
+    // Standard
+    { RESOURCE_ID_FONT_STANDARD_18, RESOURCE_ID_FONT_STANDARD_22,
+      RESOURCE_ID_FONT_STANDARD_26, RESOURCE_ID_FONT_STANDARD_30,
+      RESOURCE_ID_FONT_STANDARD_36 },
+    // Traditional
+    { RESOURCE_ID_FONT_TRADITIONAL_18, RESOURCE_ID_FONT_TRADITIONAL_22,
+      RESOURCE_ID_FONT_TRADITIONAL_26, RESOURCE_ID_FONT_TRADITIONAL_30,
+      RESOURCE_ID_FONT_TRADITIONAL_36 },
+    // Thin
+    { RESOURCE_ID_FONT_THIN_18, RESOURCE_ID_FONT_THIN_22,
+      RESOURCE_ID_FONT_THIN_26, RESOURCE_ID_FONT_THIN_30,
+      RESOURCE_ID_FONT_THIN_36 },
+    // Oversize
+    { RESOURCE_ID_FONT_OVERSIZE_18, RESOURCE_ID_FONT_OVERSIZE_22,
+      RESOURCE_ID_FONT_OVERSIZE_26, RESOURCE_ID_FONT_OVERSIZE_30,
+      RESOURCE_ID_FONT_OVERSIZE_36 }
+  };
+  if (font_id > 4 || size_idx > 4) return 0;
+  return font_resources[font_id][size_idx];
+#endif
+}
+
+static GFont get_number_font(void) {
+  uint8_t fid  = s_settings.number_font;
+  uint8_t sidx = (s_settings.number_size >= 1 && s_settings.number_size <= 5)
+                   ? s_settings.number_size - 1 : 2;
+
+  if (fid == s_cached_font_id && sidx == s_cached_font_size && s_cached_number_font) {
+    return s_cached_number_font;
+  }
+
+  // Unload old
+  if (s_cached_number_font) {
+    fonts_unload_custom_font(s_cached_number_font);
+    s_cached_number_font = NULL;
+  }
+
+#ifdef PBL_PLATFORM_APLITE
+  // System font fallbacks for Aplite
+  static const char *aplite_fonts[5] = {
+    FONT_KEY_LECO_28_LIGHT_NUMBERS,
+    FONT_KEY_BITHAM_42_MEDIUM_NUMBERS,
+    FONT_KEY_DROID_SERIF_28_BOLD,
+    FONT_KEY_GOTHIC_28,
+    FONT_KEY_BITHAM_42_BOLD
+  };
+  s_cached_number_font = fonts_get_system_font(aplite_fonts[fid < 5 ? fid : 0]);
+#else
+  uint32_t res_id = get_font_resource_id(fid, sidx);
+  if (res_id) {
+    s_cached_number_font = fonts_load_custom_font(resource_get_handle(res_id));
+  } else {
+    s_cached_number_font = fonts_get_system_font(FONT_KEY_GOTHIC_28);
+  }
+#endif
+
+  s_cached_font_id   = fid;
+  s_cached_font_size = sidx;
+  return s_cached_number_font;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Number positioning helpers
+// ─────────────────────────────────────────────────────────────────────────────
+static const char *s_num_strings[12] = {
+  "12","1","2","3","4","5","6","7","8","9","10","11"
+};
+
+static GPoint number_position(int h, GFont font) {
+  bool is_emery = (s_screen_w >= 200);
+  int margin = is_emery ? 12 : 6;
+  int sw = s_screen_w;
+  int sh = s_screen_h;
+
+  // Measure text size
+  GRect measure_box = GRect(0, 0, 50, 50);
+  GSize sz = graphics_text_layout_get_content_size(
+    s_num_strings[h], font, measure_box,
+    GTextOverflowModeWordWrap, GTextAlignmentCenter);
+  int actual_w = sz.w;
+  int actual_h = sz.h;
+
+  int y_top = margin + actual_h / 2;
+  int y_mid = (sh - 1) / 2;
+  int y_bot = (sh - 1 - margin) - actual_h / 2;
+
+  GPoint pos = GPoint(sw / 2, sh / 2);
+
+  if (h == 0 || h == 1 || h == 11) {
+    // Top edge
+    int extra_top = (s_settings.number_font == 0) ? 7 : 0;
+    pos.y = margin + actual_h / 2 + extra_top;
+    if (h == 0) {
+      pos.x = sw / 2;
+    } else {
+      // Diagonal: project angle to top/bottom edge
+      int32_t angle = TRIG_MAX_ANGLE * h / 12;
+      GPoint edge = square_perimeter_point(GPoint(sw/2, sh/2), angle, 0, 0);
+      int shift = is_emery ? 7 : 2;
+      pos.x = edge.x + (sw/2 - edge.x) * shift / actual_w;
+    }
+  } else if (h == 5 || h == 6 || h == 7) {
+    // Bottom edge
+    pos.y = sh - 1 - margin - actual_h / 2;
+    if (h == 6) {
+      pos.x = sw / 2;
+    } else {
+      int32_t angle = TRIG_MAX_ANGLE * h / 12;
+      GPoint edge = square_perimeter_point(GPoint(sw/2, sh/2), angle, 0, 0);
+      int shift = is_emery ? 7 : 2;
+      pos.x = edge.x + (sw/2 - edge.x) * shift / actual_w;
+    }
+  } else if (h == 8 || h == 9 || h == 10) {
+    // Left edge
+    pos.x = margin;
+    if (h == 9)       pos.y = y_mid;
+    else if (h == 10) pos.y = (y_top + y_mid) / 2;
+    else              pos.y = (y_mid + y_bot) / 2;  // h==8
+  } else {
+    // Right edge (h == 2, 3, 4)
+    pos.x = sw - 1 - margin;
+    if (h == 3)      pos.y = y_mid;
+    else if (h == 2) pos.y = (y_top + y_mid) / 2;
+    else             pos.y = (y_mid + y_bot) / 2;  // h==4
+  }
+
+  return pos;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hand drawing
+// ─────────────────────────────────────────────────────────────────────────────
+static void draw_inittick_hand(GContext *ctx, GPoint center, GPoint tip,
+                                GColor outer_color, GColor inner_color) {
+  // base_pt = POS_Y(20) pixels from center toward tip
+  int dx = tip.x - center.x;
+  int dy = tip.y - center.y;
+  int dist = isqrt_int(dx*dx + dy*dy);
+  int base_px = POS_Y(FIXED_HAND_BASE_PX);
+  GPoint base_pt;
+  if (dist > 0) {
+    base_pt = GPoint(center.x + dx * base_px / dist,
+                     center.y + dy * base_px / dist);
+  } else {
+    base_pt = center;
+  }
+
+  graphics_context_set_stroke_color(ctx, MONO_COLOR(outer_color));
+
+  // Narrow stub from pivot to base
+  graphics_context_set_stroke_width(ctx, FIXED_HAND_BASE_WIDTH);
+  graphics_draw_line(ctx, center, base_pt);
+
+  // Thick main body
+  graphics_context_set_stroke_width(ctx, FIXED_HAND_OUTER_WIDTH);
+  graphics_draw_line(ctx, base_pt, tip);
+
+  // Filled circles at base and tip
+  graphics_context_set_fill_color(ctx, MONO_COLOR(outer_color));
+  graphics_fill_circle(ctx, base_pt, FIXED_HAND_BASE_WIDTH);
+  graphics_fill_circle(ctx, tip, FIXED_HAND_OUTER_WIDTH / 2);
+
+  // Thin inner stripe
+  graphics_context_set_stroke_color(ctx, MONO_COLOR(inner_color));
+  graphics_context_set_stroke_width(ctx, FIXED_HAND_INNER_WIDTH);
+  graphics_draw_line(ctx, base_pt, tip);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layer update callbacks
+// ─────────────────────────────────────────────────────────────────────────────
+
+// BG layer: background fill, markers, numbers/icons
+static void bg_layer_update(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  int sw = bounds.size.w;
+  int sh = bounds.size.h;
+  GPoint center = GPoint(sw / 2, sh / 2);
+
+  // Fill background
+  graphics_context_set_fill_color(ctx, MONO_COLOR(s_settings.background_color));
+  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+
+  // Minute markers
+  if (s_settings.display_minor_markers) {
+    graphics_context_set_stroke_color(ctx, MONO_COLOR(s_settings.minute_marker_color));
+    graphics_context_set_stroke_width(ctx, 1);
+    for (int i = 0; i < 60; i++) {
+      graphics_draw_line(ctx, s_min_marker_outer[i], s_min_marker_inner[i]);
+    }
+  }
+
+  // Hour markers
+  if (s_settings.display_hour_markers) {
+    graphics_context_set_stroke_color(ctx, MONO_COLOR(s_settings.hour_marker_color));
+    graphics_context_set_stroke_width(ctx, 3);
+    for (int i = 0; i < 12; i++) {
+      graphics_draw_line(ctx, s_hour_marker_outer[i], s_hour_marker_inner[i]);
+    }
+  }
+
+  // Sunrise / sunset markers
+  bool show_sun_markers = false;
+  if (s_settings.sunrise_marker_visible == 0) {
+    show_sun_markers = true;
+  } else if (s_settings.sunrise_marker_visible == 1) {
+    show_sun_markers = s_showing_icons;
+  }
+  // else 2 = Off
+
+  if (show_sun_markers) {
+    bool is_emery = (sw >= 200);
+    int sun_inset = is_emery ? 8 : 5;
+
+    // Sunrise marker
+    int sr_total_min = s_sunrise_hour * 60 + s_sunrise_min;
+    int cur_total_min = s_last_time.tm_hour * 60 + s_last_time.tm_min;
+    int sr_delta = sr_total_min - cur_total_min;
+    if (sr_delta < 0) sr_delta += 720;
+    if (sr_delta <= 720) {
+      int32_t sr_angle = angle_for_minute(s_sunrise_hour * 5 + s_sunrise_min / 12);
+      GPoint sr_outer = square_perimeter_point(center, sr_angle, 0, 0);
+      int dx = center.x - sr_outer.x;
+      int dy = center.y - sr_outer.y;
+      int dist = isqrt_int(dx*dx + dy*dy);
+      GPoint sr_inner = (dist > 0)
+        ? GPoint(sr_outer.x + dx * sun_inset / dist, sr_outer.y + dy * sun_inset / dist)
+        : sr_outer;
+      graphics_context_set_stroke_color(ctx, MONO_COLOR(s_settings.sunrise_marker_color));
+      graphics_context_set_stroke_width(ctx, 2);
+      graphics_draw_line(ctx, sr_outer, sr_inner);
+    }
+
+    // Sunset marker
+    int ss_total_min = s_sunset_hour * 60 + s_sunset_min;
+    int ss_delta = ss_total_min - cur_total_min;
+    if (ss_delta < 0) ss_delta += 720;
+    if (ss_delta <= 720) {
+      int32_t ss_angle = angle_for_minute(s_sunset_hour * 5 + s_sunset_min / 12);
+      GPoint ss_outer = square_perimeter_point(center, ss_angle, 0, 0);
+      int dx = center.x - ss_outer.x;
+      int dy = center.y - ss_outer.y;
+      int dist = isqrt_int(dx*dx + dy*dy);
+      GPoint ss_inner = (dist > 0)
+        ? GPoint(ss_outer.x + dx * sun_inset / dist, ss_outer.y + dy * sun_inset / dist)
+        : ss_outer;
+      graphics_context_set_stroke_color(ctx, MONO_COLOR(s_settings.sunset_marker_color));
+      graphics_context_set_stroke_width(ctx, 2);
+      graphics_draw_line(ctx, ss_outer, ss_inner);
+    }
+  }
+
+  // Numbers or icons
+  GFont num_font = get_number_font();
+  int cur_hour = s_last_time.tm_hour;
+  int cur_min  = s_last_time.tm_min;
+
+  // Determine icon size in pixels
+  static const int s_icon_sizes[5] = {16, 24, 32, 40, 48};
+  int icon_sz_idx = (s_settings.icon_size >= 1 && s_settings.icon_size <= 5)
+                      ? s_settings.icon_size - 1 : 2;
+  int icon_sz = s_icon_sizes[icon_sz_idx];
+
+  bool draw_icons = false;
+  if (s_settings.shake_mode == 1) {
+    draw_icons = true;
+  } else if (s_settings.shake_mode == 0) {
+    draw_icons = s_showing_icons;
+  }
+  // shake_mode == 2 = always hide icons
+
+  for (int h = 0; h < 12; h++) {
+    if (draw_icons) {
+      // Determine which forecast hour to show
+      int clock_num = (h == 0) ? 12 : h;
+      int am_hour = (clock_num == 12) ? 0 : clock_num;
+      int pm_hour = (clock_num == 12) ? 12 : clock_num + 12;
+      bool am_passed = (am_hour < cur_hour) || (am_hour == cur_hour && cur_min > 0);
+      bool pm_passed = (pm_hour < cur_hour) || (pm_hour == cur_hour && cur_min > 0);
+      int icon_hour = (!am_passed) ? am_hour : (!pm_passed) ? pm_hour : am_hour;
+      int8_t icon_code = s_icons[icon_hour];
+      GPathIconID gpath_id = icon_code_to_gpath(icon_code);
+
+      // Position icon at same location as number
+      GPoint pos = number_position(h, num_font);
+
+      // Determine alignment group for icon origin
+      int ox, oy;
+      bool is_emery = (sw >= 200);
+      int bas_margin = is_emery ? 12 : 6;
+
+      if (h == 0 || h == 1 || h == 11) {
+        // Top group: top edge of icon at bas_margin from top
+        ox = pos.x - icon_sz / 2;
+        oy = bas_margin;
+      } else if (h == 5 || h == 6 || h == 7) {
+        // Bottom group: bottom edge at bas_margin from bottom
+        ox = pos.x - icon_sz / 2;
+        oy = sh - bas_margin - icon_sz;
+      } else if (h == 8 || h == 9 || h == 10) {
+        // Left group: left edge at bas_margin from left
+        ox = bas_margin;
+        oy = pos.y - icon_sz / 2;
+      } else {
+        // Right group (h==2,3,4): right edge at bas_margin from right
+        ox = sw - bas_margin - icon_sz;
+        oy = pos.y - icon_sz / 2;
+      }
+
+      draw_weather_icon(ctx, gpath_id, ox, oy, icon_sz, MONO_COLOR(s_settings.icon_color));
+    } else {
+      // Draw number — position computed purely from screen geometry,
+      // identical to how icons compute their ox/oy origin, so numbers and
+      // icons always occupy the same spot regardless of font or size slider.
+      GSize sz = graphics_text_layout_get_content_size(
+        s_num_strings[h], num_font, GRect(0,0,60,60),
+        GTextOverflowModeWordWrap, GTextAlignmentCenter);
+
+      bool is_emery_n = (sw >= 200);
+      int bas_margin_n = is_emery_n ? 12 : 6;
+      int cx, cy;
+
+      if (h == 0 || h == 1 || h == 11) {
+        // Top group: Y pinned to bas_margin_n (top edge of slot).
+        // X: h==0 is centred; h==1 and h==11 use the perimeter X of that angle.
+        cy = bas_margin_n + sz.h / 2;
+        if (h == 0) {
+          cx = sw / 2;
+        } else {
+          int32_t angle = TRIG_MAX_ANGLE * h / 12;
+          GPoint edge = square_perimeter_point(GPoint(sw/2, sh/2), angle, 0, 0);
+          cx = edge.x;
+        }
+      } else if (h == 5 || h == 6 || h == 7) {
+        // Bottom group: Y pinned to sh - bas_margin_n (bottom edge of slot).
+        cy = sh - bas_margin_n - sz.h / 2;
+        if (h == 6) {
+          cx = sw / 2;
+        } else {
+          int32_t angle = TRIG_MAX_ANGLE * h / 12;
+          GPoint edge = square_perimeter_point(GPoint(sw/2, sh/2), angle, 0, 0);
+          cx = edge.x;
+        }
+      } else if (h == 8 || h == 9 || h == 10) {
+        // Left group: X pinned to bas_margin_n (left edge of slot).
+        cx = bas_margin_n + sz.w / 2;
+        int y_mid = (sh - 1) / 2;
+        int y_top = bas_margin_n + sz.h / 2;
+        int y_bot = sh - 1 - bas_margin_n - sz.h / 2;
+        if (h == 9)       cy = y_mid;
+        else if (h == 10) cy = (y_top + y_mid) / 2;
+        else              cy = (y_mid + y_bot) / 2;  // h==8
+      } else {
+        // Right group (h==2,3,4): X pinned to sw - bas_margin_n (right edge).
+        cx = sw - bas_margin_n - sz.w / 2;
+        int y_mid = (sh - 1) / 2;
+        int y_top = bas_margin_n + sz.h / 2;
+        int y_bot = sh - 1 - bas_margin_n - sz.h / 2;
+        if (h == 3)      cy = y_mid;
+        else if (h == 2) cy = (y_top + y_mid) / 2;
+        else             cy = (y_mid + y_bot) / 2;  // h==4
+      }
+
+      GRect text_rect = GRect(cx - sz.w / 2, cy - sz.h / 2, sz.w + 4, sz.h + 4);
+      graphics_context_set_text_color(ctx, MONO_COLOR(s_settings.number_color));
+      graphics_draw_text(ctx, s_num_strings[h], num_font, text_rect,
+                         GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    }
+  }
+}
+
+// Complication layer: date + temperature
+static void complication_layer_update(Layer *layer, GContext *ctx) {
+  int sw = s_screen_w;
+  (void)sw;
+  int cur_min = s_last_time.tm_min;
+
+  // Determine y position (avoid minute hand)
+  int comp_y;
+  if (cur_min >= 20 && cur_min <= 40) {
+    comp_y = POS_Y(45);
+  } else {
+    comp_y = POS_Y(105);
+  }
+
+  bool is_emery = (sw >= 200);
+  GFont comp_font = fonts_get_system_font(is_emery ? FONT_KEY_GOTHIC_24 : FONT_KEY_GOTHIC_14);
+
+  // Determine what to show
+  bool show_date = false;
+  bool show_temp = false;
+
+  // display_mode: 0=Both 1=Temp 2=Date 3=None
+  bool mode_date = (s_settings.display_mode == 0 || s_settings.display_mode == 2);
+  bool mode_temp = (s_settings.display_mode == 0 || s_settings.display_mode == 1);
+
+  // date_visible / temp_visible: 0=Always 1=Off 2=Shake
+  if (mode_date) {
+    if (s_settings.date_visible == 0) show_date = true;
+    else if (s_settings.date_visible == 2) show_date = s_showing_icons;
+  }
+  if (mode_temp) {
+    if (s_settings.temp_visible == 0) show_temp = true;
+    else if (s_settings.temp_visible == 2) show_temp = s_showing_icons;
+  }
+
+  if (!show_date && !show_temp) return;
+
+  // Date string
+  char date_buf[16] = "";
+  if (show_date) {
+    static const char *day_names[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+    snprintf(date_buf, sizeof(date_buf), "%s %d",
+             day_names[s_last_time.tm_wday], s_last_time.tm_mday);
+  }
+
+  // Temperature string
+  char temp_buf[16] = "";
+  if (show_temp) {
+    if (s_settings.temp_unit == 0) {
+      snprintf(temp_buf, sizeof(temp_buf), "%d\xc2\xb0""C", (int)s_temp_c);
+    } else {
+      snprintf(temp_buf, sizeof(temp_buf), "%d\xc2\xb0""F", (int)s_temp_f);
+    }
+  }
+
+  int line_gap = 18;
+  int x = sw / 2;
+
+  if (show_date) {
+    GRect dr = GRect(0, comp_y - 10, sw, 20);
+    graphics_context_set_text_color(ctx, MONO_COLOR(s_settings.date_color));
+    graphics_draw_text(ctx, date_buf, comp_font, dr,
+                       GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    (void)x;
+  }
+
+  if (show_temp) {
+    int ty = show_date ? comp_y + line_gap - 10 : comp_y - 10;
+    GRect tr = GRect(0, ty, sw, 20);
+    graphics_context_set_text_color(ctx, MONO_COLOR(s_settings.temp_color));
+    graphics_draw_text(ctx, temp_buf, comp_font, tr,
+                       GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+  }
+}
+
+// Hour hand layer
+static void hour_layer_update(Layer *layer, GContext *ctx) {
+  int sw = s_screen_w;
+  int sh = s_screen_h;
+  GPoint center = GPoint(sw / 2, sh / 2);
+  int radius = (sw < sh ? sw : sh) / 2;
+
+  int32_t angle = angle_for_hour(s_last_time.tm_hour % 12, s_last_time.tm_min);
+  GPoint tip = polar_to_point(center, angle, radius * 60 / 100);
+
+  draw_inittick_hand(ctx, center, tip,
+                     s_settings.hour_hand_outer,
+                     s_settings.hour_hand_inner);
+}
+
+// Minute hand + centre cap layer
+static void minute_layer_update(Layer *layer, GContext *ctx) {
+  int sw = s_screen_w;
+  int sh = s_screen_h;
+  GPoint center = GPoint(sw / 2, sh / 2);
+  int radius = (sw < sh ? sw : sh) / 2;
+
+  int32_t angle = angle_for_minute(s_last_time.tm_min);
+  GPoint tip = polar_to_point(center, angle, radius * 95 / 100);
+
+  // BT disconnect override
+  GColor min_outer = s_settings.min_hand_outer;
+  GColor min_inner = s_settings.min_hand_inner;
+  if (!s_bt_connected && s_settings.bt_disconnect_min_inner_red) {
+    min_outer = s_settings.bt_disconnect_outer_color;
+    min_inner = s_settings.bt_disconnect_inner_color;
+  }
+
+  draw_inittick_hand(ctx, center, tip, min_outer, min_inner);
+
+  // Centre cap — five concentric circles
+  // Battery alert colours
+  GColor battery_ring = GColorWhite;
+  GColor inner_ring   = s_settings.min_hand_inner;
+  GColor dot          = s_settings.hour_hand_outer;
+
+  bool low_battery      = (s_battery_pct <= s_settings.battery_ring_threshold &&
+                            s_settings.battery_ring_threshold > 0);
+  bool critical_battery = (s_battery_pct <= s_settings.battery_center_threshold &&
+                            s_settings.battery_center_threshold > 0);
+
+  if (low_battery)      battery_ring = GColorRed;
+  if (critical_battery) { battery_ring = GColorRed; inner_ring = GColorRed; dot = GColorRed; }
+
+  // r5 outer ring
+  graphics_context_set_fill_color(ctx, MONO_COLOR(battery_ring));
+  graphics_fill_circle(ctx, center, POS_X(7));
+  // r4 black gap
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_fill_circle(ctx, center, POS_X(5));
+  // r3 inner ring
+  graphics_context_set_fill_color(ctx, MONO_COLOR(inner_ring));
+  graphics_fill_circle(ctx, center, POS_X(4));
+  // r2 black gap
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_fill_circle(ctx, center, POS_X(2));
+  // r1 centre dot
+  graphics_context_set_fill_color(ctx, MONO_COLOR(dot));
+  graphics_fill_circle(ctx, center, POS_X(1));
+}
+
+// Seconds hand layer
+static void seconds_layer_update(Layer *layer, GContext *ctx) {
+  if (!s_seconds_visible) return;
+
+  int sw = s_screen_w;
+  int sh = s_screen_h;
+  GPoint center = GPoint(sw / 2, sh / 2);
+
+  int32_t angle = angle_for_minute(s_last_time.tm_sec);
+  GPoint tip  = square_perimeter_point(center, angle, 0, 0);
+  // Tail: short counterbalance behind pivot
+  int32_t tail_angle = angle + (TRIG_MAX_ANGLE / 2);
+  GPoint tail = polar_to_point(center, tail_angle, POS_Y(18));
+
+  graphics_context_set_stroke_color(ctx, MONO_COLOR(s_settings.seconds_hand_color));
+  graphics_context_set_stroke_width(ctx, 1);
+  graphics_draw_line(ctx, tail, tip);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tick subscription management
+// ─────────────────────────────────────────────────────────────────────────────
+static void update_tick_subscription(void) {
+  bool need_seconds = false;
+  if (s_settings.seconds_hand_mode == 1) {
+    need_seconds = true;
+    s_seconds_visible = true;
+  } else if (s_settings.seconds_hand_mode == 2) {
+    need_seconds = s_seconds_visible;
+  } else {
+    s_seconds_visible = false;
+  }
+
+  tick_timer_service_unsubscribe();
+  if (need_seconds) {
+    tick_timer_service_subscribe(SECOND_UNIT, tick_handler);
+  } else {
+    tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shake / icon display timers
+// ─────────────────────────────────────────────────────────────────────────────
+static void hide_icons_callback(void *data) {
+  s_shake_timer = NULL;
+  s_showing_icons = false;
+  layer_mark_dirty(s_bg_layer);
+  layer_mark_dirty(s_complication_layer);
+}
+
+static void show_icons_callback(void *data) {
+  s_shake_delay_timer = NULL;
+  s_showing_icons = true;
+  layer_mark_dirty(s_bg_layer);
+  layer_mark_dirty(s_complication_layer);
+
+  if (s_shake_timer) {
+    app_timer_reschedule(s_shake_timer, SHAKE_DISPLAY_MS);
+  } else {
+    s_shake_timer = app_timer_register(SHAKE_DISPLAY_MS, hide_icons_callback, NULL);
+  }
+}
+
+static void hide_seconds_callback(void *data) {
+  s_seconds_timer = NULL;
+  s_seconds_visible = false;
+  update_tick_subscription();
+  layer_mark_dirty(s_seconds_layer);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tick handler
+// ─────────────────────────────────────────────────────────────────────────────
+static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
+  bool hour_changed = (tick_time->tm_hour != s_last_time.tm_hour);
+  s_last_time = *tick_time;
+
+  if (units_changed & SECOND_UNIT) {
+    layer_mark_dirty(s_seconds_layer);
+  }
+  if (units_changed & MINUTE_UNIT) {
+    layer_mark_dirty(s_minute_layer);
+    layer_mark_dirty(s_hour_layer);
+    layer_mark_dirty(s_complication_layer);
+  }
+  if (hour_changed) {
+    layer_mark_dirty(s_bg_layer);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Accelerometer tap (shake) handler
+// ─────────────────────────────────────────────────────────────────────────────
+static void accel_tap_handler(AccelAxisType axis, int32_t direction) {
+  // Seconds hand on shake
+  if (s_settings.seconds_hand_mode == 2) {
+    s_seconds_visible = true;
+    update_tick_subscription();
+    if (s_seconds_timer) {
+      app_timer_reschedule(s_seconds_timer, s_settings.seconds_shake_dur * 1000);
+    } else {
+      s_seconds_timer = app_timer_register(
+        s_settings.seconds_shake_dur * 1000, hide_seconds_callback, NULL);
+    }
+    layer_mark_dirty(s_seconds_layer);
+  }
+
+  // Icons on shake (shake_mode == 0)
+  if (s_settings.shake_mode == 0) {
+    if (!s_showing_icons) {
+      // Start 500ms delay then show icons
+      if (!s_shake_delay_timer) {
+        s_shake_delay_timer = app_timer_register(SHAKE_DELAY_MS, show_icons_callback, NULL);
+      }
+    } else {
+      // Already showing: extend timer
+      if (s_shake_timer) {
+        app_timer_reschedule(s_shake_timer, SHAKE_DISPLAY_MS);
+      }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Battery handler
+// ─────────────────────────────────────────────────────────────────────────────
+static void battery_handler(BatteryChargeState charge) {
+  s_battery_pct = charge.charge_percent;
+  layer_mark_dirty(s_minute_layer);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bluetooth handler
+// ─────────────────────────────────────────────────────────────────────────────
+static void bt_handler(bool connected) {
+  bool was_connected = s_bt_connected;
+  s_bt_connected = connected;
+
+  if (!connected && was_connected && s_settings.vibrate_bt_disconnect) {
+    vibes_long_pulse();
+  }
+  if (connected && !was_connected && s_settings.vibrate_bt_reconnect) {
+    vibes_short_pulse();
+  }
+
+  layer_mark_dirty(s_minute_layer);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AppMessage handler
+// ─────────────────────────────────────────────────────────────────────────────
+static void inbox_received_handler(DictionaryIterator *iter, void *context) {
+  bool weather_changed  = false;
+  bool settings_changed = false;
+  bool bg_dirty         = false;
+
+  Tuple *t;
+
+  // Icons
+  for (int i = 0; i < 24; i++) {
+    t = dict_find(iter, i);  // KEY_ICON_0 = 0 ... KEY_ICON_23 = 23
+    if (t) {
+      s_icons[i] = (int8_t)t->value->int32;
+      weather_changed = true;
+    }
+  }
+
+  // Temperature
+  t = dict_find(iter, 58); // KEY_TEMP_C
+  if (t) { s_temp_c = (int8_t)t->value->int32; weather_changed = true; }
+  t = dict_find(iter, 59); // KEY_TEMP_F
+  if (t) { s_temp_f = (int8_t)t->value->int32; weather_changed = true; }
+
+  // Sunrise / sunset
+  t = dict_find(iter, 25); if (t) { s_sunrise_hour = (int8_t)t->value->int32; weather_changed = true; }
+  t = dict_find(iter, 26); if (t) { s_sunrise_min  = (int8_t)t->value->int32; weather_changed = true; }
+  t = dict_find(iter, 27); if (t) { s_sunset_hour  = (int8_t)t->value->int32; weather_changed = true; }
+  t = dict_find(iter, 28); if (t) { s_sunset_min   = (int8_t)t->value->int32; weather_changed = true; }
+
+  if (weather_changed) {
+    persist_write_data(PERSIST_ICONS, s_icons, sizeof(s_icons));
+  }
+
+  // Settings
+  t = dict_find(iter, 40); // KEY_DISPLAY_HOUR_MARKERS
+  if (t) { s_settings.display_hour_markers = (bool)t->value->int32; settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 41); // KEY_DISPLAY_MINOR_MARKERS
+  if (t) { s_settings.display_minor_markers = (bool)t->value->int32; settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 53); // KEY_BT_DISCONNECT_MIN_INNER_RED
+  if (t) { s_settings.bt_disconnect_min_inner_red = (bool)t->value->int32; settings_changed = true; }
+
+  t = dict_find(iter, 54); // KEY_VIBRATE_BT_DISCONNECT
+  if (t) { s_settings.vibrate_bt_disconnect = (bool)t->value->int32; settings_changed = true; }
+
+  t = dict_find(iter, 55); // KEY_VIBRATE_BT_RECONNECT
+  if (t) { s_settings.vibrate_bt_reconnect = (bool)t->value->int32; settings_changed = true; }
+
+  t = dict_find(iter, 107); // KEY_SHAKE_MODE
+  if (t) { s_settings.shake_mode = (uint8_t)t->value->int32; settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 110); // KEY_TEMP_UNIT
+  if (t) { s_settings.temp_unit = (uint8_t)t->value->int32; settings_changed = true; }
+
+  t = dict_find(iter, 113); // KEY_CUSTOM_LOCATION (string, handled by JS)
+  // No C-side action needed
+
+  t = dict_find(iter, 114); // KEY_HOUR_HAND_OUTER
+  if (t) { s_settings.hour_hand_outer = rgb_to_gcolor(t->value->int32); settings_changed = true; }
+
+  t = dict_find(iter, 115); // KEY_HOUR_HAND_INNER
+  if (t) { s_settings.hour_hand_inner = rgb_to_gcolor(t->value->int32); settings_changed = true; }
+
+  t = dict_find(iter, 116); // KEY_MIN_HAND_OUTER
+  if (t) { s_settings.min_hand_outer = rgb_to_gcolor(t->value->int32); settings_changed = true; }
+
+  t = dict_find(iter, 117); // KEY_MIN_HAND_INNER
+  if (t) { s_settings.min_hand_inner = rgb_to_gcolor(t->value->int32); settings_changed = true; }
+
+  t = dict_find(iter, 118); // KEY_DATE_VISIBLE
+  if (t) { s_settings.date_visible = (uint8_t)t->value->int32; settings_changed = true; }
+
+  t = dict_find(iter, 119); // KEY_TEMP_VISIBLE
+  if (t) { s_settings.temp_visible = (uint8_t)t->value->int32; settings_changed = true; }
+
+  t = dict_find(iter, 121); // KEY_NUMBER_FONT
+  if (t) {
+    uint8_t new_font = (uint8_t)t->value->int32;
+    if (new_font != s_settings.number_font) {
+      s_settings.number_font = new_font;
+      s_cached_font_id = 255; // Invalidate cache
+      bg_dirty = true;
+    }
+    settings_changed = true;
+  }
+
+  t = dict_find(iter, 126); // KEY_BACKGROUND_COLOR
+  if (t) { s_settings.background_color = rgb_to_gcolor(t->value->int32); settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 127); // KEY_NUMBER_COLOR
+  if (t) { s_settings.number_color = rgb_to_gcolor(t->value->int32); settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 128); // KEY_ICON_COLOR
+  if (t) { s_settings.icon_color = rgb_to_gcolor(t->value->int32); settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 129); // KEY_HOUR_MARKER_COLOR
+  if (t) { s_settings.hour_marker_color = rgb_to_gcolor(t->value->int32); settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 130); // KEY_MINUTE_MARKER_COLOR
+  if (t) { s_settings.minute_marker_color = rgb_to_gcolor(t->value->int32); settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 134); // KEY_DATE_COLOR
+  if (t) { s_settings.date_color = rgb_to_gcolor(t->value->int32); settings_changed = true; }
+
+  t = dict_find(iter, 135); // KEY_TEMP_COLOR
+  if (t) { s_settings.temp_color = rgb_to_gcolor(t->value->int32); settings_changed = true; }
+
+  t = dict_find(iter, 136); // KEY_BT_DISCONNECT_OUTER_COLOR
+  if (t) { s_settings.bt_disconnect_outer_color = rgb_to_gcolor(t->value->int32); settings_changed = true; }
+
+  t = dict_find(iter, 137); // KEY_BT_DISCONNECT_INNER_COLOR
+  if (t) { s_settings.bt_disconnect_inner_color = rgb_to_gcolor(t->value->int32); settings_changed = true; }
+
+  t = dict_find(iter, 138); // KEY_BATTERY_RING_THRESHOLD
+  if (t) { s_settings.battery_ring_threshold = (uint8_t)t->value->int32; settings_changed = true; }
+
+  t = dict_find(iter, 139); // KEY_BATTERY_CENTER_THRESHOLD
+  if (t) { s_settings.battery_center_threshold = (uint8_t)t->value->int32; settings_changed = true; }
+
+  t = dict_find(iter, 141); // KEY_SECONDS_HAND_COLOR
+  if (t) { s_settings.seconds_hand_color = rgb_to_gcolor(t->value->int32); settings_changed = true; }
+
+  t = dict_find(iter, 142); // KEY_SECONDS_HAND_MODE
+  if (t) {
+    s_settings.seconds_hand_mode = (uint8_t)t->value->int32;
+    update_tick_subscription();
+    settings_changed = true;
+  }
+
+  t = dict_find(iter, 143); // KEY_SECONDS_SHAKE_DUR
+  if (t) { s_settings.seconds_shake_dur = (uint8_t)t->value->int32; settings_changed = true; }
+
+  t = dict_find(iter, 144); // KEY_TEST_BATTERY_ALERT
+  if (t && t->value->int32) {
+    // Temporarily show battery alert
+    uint8_t saved = s_battery_pct;
+    s_battery_pct = 5;
+    layer_mark_dirty(s_minute_layer);
+    s_battery_pct = saved;
+  }
+
+  t = dict_find(iter, 145); // KEY_TEST_BT_DISCONNECT
+  if (t && t->value->int32) {
+    bool saved = s_bt_connected;
+    s_bt_connected = false;
+    layer_mark_dirty(s_minute_layer);
+    s_bt_connected = saved;
+  }
+
+  t = dict_find(iter, 147); // KEY_SUNRISE_MARKER_VISIBLE
+  if (t) { s_settings.sunrise_marker_visible = (uint8_t)t->value->int32; settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 148); // KEY_SUNRISE_MARKER_COLOR
+  if (t) { s_settings.sunrise_marker_color = rgb_to_gcolor(t->value->int32); settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 149); // KEY_SUNSET_MARKER_COLOR
+  if (t) { s_settings.sunset_marker_color = rgb_to_gcolor(t->value->int32); settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 150); // KEY_NUMBER_SIZE
+  if (t) {
+    uint8_t new_size = (uint8_t)t->value->int32;
+    if (new_size != s_settings.number_size) {
+      s_settings.number_size = new_size;
+      s_cached_font_size = 255; // Invalidate cache
+      bg_dirty = true;
+    }
+    settings_changed = true;
+  }
+
+  t = dict_find(iter, 151); // KEY_ICON_SIZE
+  if (t) { s_settings.icon_size = (uint8_t)t->value->int32; settings_changed = true; bg_dirty = true; }
+
+  t = dict_find(iter, 153); // KEY_ICON_COLOR_MODE
+  if (t) { settings_changed = true; }
+
+  t = dict_find(iter, 158); // KEY_DISPLAY_MODE
+  if (t) { s_settings.display_mode = (uint8_t)t->value->int32; settings_changed = true; }
+
+  // Shake mode also controls accel subscription
+  if (settings_changed) {
+    persist_write_data(PERSIST_SETTINGS, &s_settings, sizeof(Settings));
+    bool need_accel = (s_settings.shake_mode == 0 || s_settings.seconds_hand_mode == 2);
+    if (need_accel) {
+      accel_tap_service_subscribe(accel_tap_handler);
+    } else {
+      accel_tap_service_unsubscribe();
+    }
+  }
+
+  if (bg_dirty || weather_changed) {
+    layer_mark_dirty(s_bg_layer);
+  }
+  layer_mark_dirty(s_complication_layer);
+  layer_mark_dirty(s_hour_layer);
+  layer_mark_dirty(s_minute_layer);
+  layer_mark_dirty(s_seconds_layer);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Default settings
+// ─────────────────────────────────────────────────────────────────────────────
+static void load_default_settings(void) {
+  bool is_emery = (s_screen_w >= 200);
+
+  s_settings.background_color       = GColorBlack;
+  s_settings.display_hour_markers   = true;
+  s_settings.hour_marker_color      = GColorWhite;
+  s_settings.display_minor_markers  = true;
+  s_settings.minute_marker_color    = GColorFromRGB(0x6b, 0x7f, 0x99);
+  s_settings.number_font            = 0;   // Digital
+  s_settings.number_size            = 3;
+  s_settings.number_color           = GColorWhite;
+  s_settings.icon_size              = 3;
+  s_settings.icon_color             = GColorWhite;
+  s_settings.hour_hand_outer        = GColorWhite;
+  s_settings.hour_hand_inner        = GColorBlack;
+  s_settings.min_hand_outer         = GColorBlack;
+  s_settings.min_hand_inner         = GColorFromRGB(0, 97, 254);
+  s_settings.seconds_hand_color     = GColorWhite;
+  s_settings.seconds_hand_mode      = 2;   // Shake to show
+  s_settings.seconds_shake_dur      = 10;
+  s_settings.date_visible           = 0;   // Always
+  s_settings.temp_visible           = 0;   // Always
+  s_settings.display_mode           = 0;   // Both
+  s_settings.temp_unit              = 0;   // °C
+  s_settings.date_color             = GColorFromRGB(0x4a, 0x5f, 0x7f);
+  s_settings.temp_color             = GColorFromRGB(0x4a, 0x5f, 0x7f);
+  s_settings.battery_ring_threshold   = is_emery ? 30 : 50;
+  s_settings.battery_center_threshold = is_emery ? 10 : 20;
+  s_settings.sunrise_marker_visible = 0;   // Always
+  s_settings.sunrise_marker_color   = GColorFromRGB(0xff, 0x95, 0x00);
+  s_settings.sunset_marker_color    = GColorFromRGB(0x00, 0x61, 0xfe);
+  s_settings.vibrate_bt_disconnect  = true;
+  s_settings.vibrate_bt_reconnect   = false;
+  s_settings.bt_disconnect_min_inner_red = true;
+  s_settings.bt_disconnect_outer_color   = GColorRed;
+  s_settings.bt_disconnect_inner_color   = GColorRed;
+  s_settings.shake_mode             = 0;   // Show on shake
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Window load / unload
+// ─────────────────────────────────────────────────────────────────────────────
+static void window_load(Window *window) {
+  Layer *root = window_get_root_layer(window);
+  GRect bounds = layer_get_bounds(root);
+
+  s_screen_w = bounds.size.w;
+  s_screen_h = bounds.size.h;
+
+  // Load persisted settings or defaults
+  if (persist_exists(PERSIST_SETTINGS)) {
+    persist_read_data(PERSIST_SETTINGS, &s_settings, sizeof(Settings));
+  } else {
+    load_default_settings();
+  }
+
+  // Load persisted icons
+  if (persist_exists(PERSIST_ICONS)) {
+    persist_read_data(PERSIST_ICONS, s_icons, sizeof(s_icons));
+  } else {
+    memset(s_icons, ICON_UNKNOWN, sizeof(s_icons));
+  }
+
+  // Compute marker caches
+  compute_markers();
+
+  // Create layers (bottom to top)
+  s_bg_layer = layer_create(bounds);
+  layer_set_update_proc(s_bg_layer, bg_layer_update);
+  layer_add_child(root, s_bg_layer);
+
+  s_complication_layer = layer_create(bounds);
+  layer_set_update_proc(s_complication_layer, complication_layer_update);
+  layer_add_child(root, s_complication_layer);
+
+  s_hour_layer = layer_create(bounds);
+  layer_set_update_proc(s_hour_layer, hour_layer_update);
+  layer_add_child(root, s_hour_layer);
+
+  s_minute_layer = layer_create(bounds);
+  layer_set_update_proc(s_minute_layer, minute_layer_update);
+  layer_add_child(root, s_minute_layer);
+
+  s_seconds_layer = layer_create(bounds);
+  layer_set_update_proc(s_seconds_layer, seconds_layer_update);
+  layer_add_child(root, s_seconds_layer);
+
+  // Get initial time
+  time_t now = time(NULL);
+  struct tm *t = localtime(&now);
+  if (t) s_last_time = *t;
+
+  // Initial seconds visibility
+  s_seconds_visible = (s_settings.seconds_hand_mode == 1);
+
+  // Subscribe to tick timer
+  update_tick_subscription();
+
+  // Subscribe to battery and BT
+  BatteryChargeState bcs = battery_state_service_peek();
+  s_battery_pct = bcs.charge_percent;
+  battery_state_service_subscribe(battery_handler);
+
+  s_bt_connected = connection_service_peek_pebble_app_connection();
+  connection_service_subscribe((ConnectionHandlers){
+    .pebble_app_connection_handler = bt_handler
+  });
+
+  // Subscribe to accel tap if needed
+  bool need_accel = (s_settings.shake_mode == 0 || s_settings.seconds_hand_mode == 2);
+  if (need_accel) {
+    accel_tap_service_subscribe(accel_tap_handler);
+  }
+
+  // Open AppMessage
+  app_message_open(APP_MSG_INBOX_SIZE, APP_MSG_OUTBOX_SIZE);
+  app_message_register_inbox_received(inbox_received_handler);
+}
+
+static void window_unload(Window *window) {
+  // Unload font
+  if (s_cached_number_font) {
+    fonts_unload_custom_font(s_cached_number_font);
+    s_cached_number_font = NULL;
+  }
+
+  // Cancel timers
+  if (s_shake_timer)       { app_timer_cancel(s_shake_timer);       s_shake_timer = NULL; }
+  if (s_shake_delay_timer) { app_timer_cancel(s_shake_delay_timer); s_shake_delay_timer = NULL; }
+  if (s_seconds_timer)     { app_timer_cancel(s_seconds_timer);     s_seconds_timer = NULL; }
+
+  // Unsubscribe
+  tick_timer_service_unsubscribe();
+  battery_state_service_unsubscribe();
+  connection_service_unsubscribe();
+  accel_tap_service_unsubscribe();
+
+  // Destroy layers
+  layer_destroy(s_seconds_layer);
+  layer_destroy(s_minute_layer);
+  layer_destroy(s_hour_layer);
+  layer_destroy(s_complication_layer);
+  layer_destroy(s_bg_layer);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App init / deinit
+// ─────────────────────────────────────────────────────────────────────────────
+static void init(void) {
+  s_window = window_create();
+  window_set_window_handlers(s_window, (WindowHandlers){
+    .load   = window_load,
+    .unload = window_unload
+  });
+  window_stack_push(s_window, true);
+}
+
+static void deinit(void) {
+  window_destroy(s_window);
+}
+
+int main(void) {
+  init();
+  app_event_loop();
+  deinit();
+}
