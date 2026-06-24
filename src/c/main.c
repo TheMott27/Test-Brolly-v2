@@ -576,31 +576,44 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
 
       draw_weather_icon(ctx, gpath_id, ox, oy, icon_sz, MONO_COLOR(s_settings.icon_color));
     } else {
-      // Draw number — standard square-face position.
-      // Find where the hour-angle ray hits the screen perimeter, then inset
-      // by a fixed margin so the number sits just inside the edge.
+      // Draw number — anchored by its relevant edge a constant gap from the
+      // nearest screen edge. The cross-axis position comes from the hour-angle
+      // perimeter ray so each number lines up under its clock position.
       int32_t angle = TRIG_MAX_ANGLE * h / 12;
       GPoint edge = square_perimeter_point(GPoint(sw/2, sh/2), angle, 0, 0);
 
-      // Inset: move the anchor point toward centre by num_inset pixels
-      int num_inset = (sw >= 200) ? 14 : 10;
-      int dx = (sw/2) - edge.x;
-      int dy = (sh/2) - edge.y;
-      int dist = isqrt_int(dx*dx + dy*dy);
-      int cx, cy;
-      if (dist > 0) {
-        cx = edge.x + dx * num_inset / dist;
-        cy = edge.y + dy * num_inset / dist;
-      } else {
-        cx = sw / 2;
-        cy = sh / 2;
-      }
+      // Constant gap between screen edge and the nearest edge of the text box
+      int gap = (sw >= 200) ? 8 : 4;
 
-      // Measure text and centre the rect on (cx, cy)
+      // Measure text
       GSize sz = graphics_text_layout_get_content_size(
         s_num_strings[h], num_font, GRect(0,0,60,60),
         GTextOverflowModeWordWrap, GTextAlignmentCenter);
-      GRect text_rect = GRect(cx - sz.w / 2, cy - sz.h / 2, sz.w + 4, sz.h + 4);
+
+      // Top-left corner of the text box
+      int rx, ry;
+
+      if (h == 11 || h == 0 || h == 1) {
+        // Top numbers: top edge of text sits `gap` below the top screen edge.
+        ry = gap;
+        // X centred on the perimeter ray X (so it sits under its clock angle).
+        rx = edge.x - sz.w / 2;
+      } else if (h == 5 || h == 6 || h == 7) {
+        // Bottom numbers: bottom edge of text sits `gap` above bottom edge.
+        ry = sh - gap - sz.h;
+        rx = edge.x - sz.w / 2;
+      } else if (h == 8 || h == 9 || h == 10) {
+        // Left numbers: left edge of text sits `gap` right of left screen edge.
+        rx = gap;
+        // Y centred on the perimeter ray Y.
+        ry = edge.y - sz.h / 2;
+      } else {
+        // Right numbers (h == 2, 3, 4): right edge of text `gap` from right edge.
+        rx = sw - gap - sz.w;
+        ry = edge.y - sz.h / 2;
+      }
+
+      GRect text_rect = GRect(rx, ry, sz.w + 4, sz.h + 4);
       graphics_context_set_text_color(ctx, MONO_COLOR(s_settings.number_color));
       graphics_draw_text(ctx, s_num_strings[h], num_font, text_rect,
                          GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
