@@ -145,6 +145,22 @@ static GFont s_cached_number_font = NULL;
 static uint8_t s_cached_font_id   = 255;
 static uint8_t s_cached_font_size  = 255;
 
+// Ink-bounds cache for the current number font (measured once per font change).
+// These describe, for a given digit string, how much empty padding sits inside
+// the text box on each side: the visible ink rectangle relative to the box.
+// Index 0..11 matches s_num_strings ("12","1",.."11").
+typedef struct {
+  int8_t left;   // px from box left  to first ink column
+  int8_t top;    // px from box top   to first ink row
+  int8_t right;  // px from last ink column to box right
+  int8_t bottom; // px from last ink row    to box bottom
+  uint8_t box_w; // measured text box width
+  uint8_t box_h; // measured text box height
+  bool valid;
+} InkBounds;
+static InkBounds s_ink[12];
+static bool s_ink_valid = false;
+
 // Shake / icon display state
 static bool     s_showing_icons   = false;
 static AppTimer *s_shake_timer     = NULL;
@@ -323,6 +339,7 @@ static GFont get_number_font(void) {
 
   s_cached_font_id   = fid;
   s_cached_font_size = sidx;
+  s_ink_valid = false;  // force re-measure of ink bounds for the new font
   return s_cached_number_font;
 }
 
@@ -437,6 +454,92 @@ static void draw_inittick_hand(GContext *ctx, GPoint center, GPoint tip,
 // Layer update callbacks
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Measure the true visible-ink rectangle of each digit string for the current
+// number font. We draw each string into a scratch area, capture the frame
+// buffer, and scan for lit pixels. Run once per font change inside the paint
+// callback (the only place text rendering + framebuffer capture is valid).
+// While measuring, the scratch draws are overwritten by the normal paint that
+// follows, so nothing is visible to the user.
+static void measure_ink_bounds(GContext *ctx, GFont font, int sw, int sh) {
+  (void)sw; (void)sh;
+  // Scratch box near top-left, large enough for the biggest number.
+  const int SX = 0, SY = 0, SW = 64, SH = 64;
+
+  for (int h = 0; h < 12; h++) {
+    InkBounds *ib = &s_ink[h];
+    ib->valid = false;
+
+    GSize box = graphics_text_layout_get_content_size(
+      s_num_strings[h], font, GRect(0, 0, 80, 80),
+      GTextOverflowModeWordWrap, GTextAlignmentLeft);
+    ib->box_w = (uint8_t)box.w;
+    ib->box_h = (uint8_t)box.h;
+    if (box.w <= 0 || box.h <= 0) continue;
+
+    // Clear scratch area to black, draw the digit in white, top-left aligned.
+    graphics_context_set_fill_color(ctx, GColorBlack);
+    graphics_fill_rect(ctx, GRect(SX, SY, SW, SH), 0, GCornerNone);
+    graphics_context_set_text_color(ctx, GColorWhite);
+    graphics_draw_text(ctx, s_num_strings[h], font,
+                       GRect(SX, SY, SW, SH),
+                       GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
+
+    // Capture and scan the framebuffer for lit pixels within the box region.
+    GBitmap *fb = graphics_capture_frame_buffer(ctx);
+    if (!fb) continue;
+
+    int scan_w = box.w; if (scan_w > SW) scan_w = SW;
+    int scan_h = box.h; if (scan_h > SH) scan_h = SH;
+
+    int min_x = scan_w, min_y = scan_h, max_x = -1, max_y = -1;
+
+    for (int y = 0; y < scan_h; y++) {
+      GBitmapDataRowInfo row = gbitmap_get_data_row_info(fb, SY + y);
+      for (int x = 0; x < scan_w; x++) {
+        int px = SX + x;
+        if (px < row.min_x || px > row.max_x) continue;
+        bool lit;
+#if defined(PBL_COLOR)
+        GColor8 c = (GColor8){ .argb = row.data[px] };
+        lit = (c.r || c.g || c.b);
+#else
+        uint8_t byte = row.data[px >> 3];
+        lit = (byte >> (px & 7)) & 1;
+#endif
+        if (lit) {
+          if (x < min_x) min_x = x;
+          if (x > max_x) max_x = x;
+          if (y < min_y) min_y = y;
+          if (y > max_y) max_y = y;
+        }
+      }
+    }
+    graphics_release_frame_buffer(ctx, fb);
+
+    if (max_x < 0) {
+      // No ink found (shouldn't happen) — fall back to zero padding.
+      ib->left = ib->top = ib->right = ib->bottom = 0;
+      ib->valid = true;
+      continue;
+    }
+
+    // Padding inside the measured text box on each side.
+    ib->left   = (int8_t)min_x;
+    ib->top    = (int8_t)min_y;
+    ib->right  = (int8_t)(box.w - 1 - max_x);
+    ib->bottom = (int8_t)(box.h - 1 - max_y);
+    if (ib->right  < 0) ib->right  = 0;
+    if (ib->bottom < 0) ib->bottom = 0;
+    ib->valid = true;
+  }
+
+  // Clear the scratch area so the subsequent normal paint starts clean.
+  graphics_context_set_fill_color(ctx, MONO_COLOR(s_settings.background_color));
+  graphics_fill_rect(ctx, GRect(SX, SY, SW, SH), 0, GCornerNone);
+
+  s_ink_valid = true;
+}
+
 // BG layer: background fill, markers, numbers/icons
 static void bg_layer_update(Layer *layer, GContext *ctx) {
   GRect bounds = layer_get_bounds(layer);
@@ -522,6 +625,12 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
   int cur_hour = s_last_time.tm_hour;
   int cur_min  = s_last_time.tm_min;
 
+  // Measure true ink bounds once per font change. Must happen here (paint
+  // callback) where text rendering and framebuffer capture are valid.
+  if (!s_ink_valid) {
+    measure_ink_bounds(ctx, num_font, sw, sh);
+  }
+
   // Determine icon size in pixels
   static const int s_icon_sizes[5] = {16, 24, 32, 40, 48};
   int icon_sz_idx = (s_settings.icon_size >= 1 && s_settings.icon_size <= 5)
@@ -577,47 +686,61 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
 
       draw_weather_icon(ctx, gpath_id, ox, oy, icon_sz, MONO_COLOR(s_settings.icon_color));
     } else {
-      // Draw number — anchored by its relevant edge a constant gap from the
-      // nearest screen edge. The cross-axis position comes from the hour-angle
-      // perimeter ray so each number lines up under its clock position.
+      // Draw number anchored by its TRUE VISIBLE INK edge a constant gap from
+      // the nearest screen edge. The cross-axis position comes from the
+      // hour-angle perimeter ray so each number lines up under its clock
+      // position. The text box itself is offset so that, after the font's
+      // internal padding (s_ink[h]), the lit pixels land exactly where we want.
       int32_t angle = TRIG_MAX_ANGLE * h / 12;
       GPoint edge = square_perimeter_point(GPoint(sw/2, sh/2), angle, 0, 0);
 
-      // Baseline gap = 0 so numbers touch the edge; adjust later as needed.
+      InkBounds ib = s_ink[h];
+      if (!ib.valid) {
+        // Defensive fallback: treat the whole box as ink.
+        GSize sz = graphics_text_layout_get_content_size(
+          s_num_strings[h], num_font, GRect(0,0,80,80),
+          GTextOverflowModeWordWrap, GTextAlignmentLeft);
+        ib.box_w = (uint8_t)sz.w; ib.box_h = (uint8_t)sz.h;
+        ib.left = ib.top = ib.right = ib.bottom = 0;
+        ib.valid = true;
+      }
+
+      // Dimensions of the visible ink itself.
+      int ink_w = ib.box_w - ib.left - ib.right;
+      int ink_h = ib.box_h - ib.top  - ib.bottom;
+      if (ink_w < 1) ink_w = 1;
+      if (ink_h < 1) ink_h = 1;
+
+      // Baseline gap = 0 so the visible ink touches the edge; tune later.
       int gap = 0;
 
-      // Measure text
-      GSize sz = graphics_text_layout_get_content_size(
-        s_num_strings[h], num_font, GRect(0,0,60,60),
-        GTextOverflowModeWordWrap, GTextAlignmentCenter);
-
-      // Top-left corner of the text box
+      // Top-left corner of the (untrimmed) text box. We position so that the
+      // visible ink edge sits `gap` from the screen edge, and the ink centre
+      // sits on the perimeter ray on the cross axis.
       int rx, ry;
 
       if (h == 11 || h == 0 || h == 1) {
-        // Top numbers: top edge of text sits `gap` below the top screen edge.
-        ry = gap;
-        // X centred on the perimeter ray X (so it sits under its clock angle).
-        rx = edge.x - sz.w / 2;
+        // Top group: visible ink TOP sits `gap` below the top screen edge.
+        ry = gap - ib.top;
+        rx = edge.x - ink_w / 2 - ib.left;
       } else if (h == 5 || h == 6 || h == 7) {
-        // Bottom numbers: bottom edge of text sits `gap` above bottom edge.
-        ry = sh - gap - sz.h;
-        rx = edge.x - sz.w / 2;
+        // Bottom group: visible ink BOTTOM sits `gap` above bottom screen edge.
+        ry = sh - gap - ib.box_h + ib.bottom;
+        rx = edge.x - ink_w / 2 - ib.left;
       } else if (h == 8 || h == 9 || h == 10) {
-        // Left numbers: left edge of text sits `gap` right of left screen edge.
-        rx = gap;
-        // Y centred on the perimeter ray Y.
-        ry = edge.y - sz.h / 2;
+        // Left group: visible ink LEFT sits `gap` right of left screen edge.
+        rx = gap - ib.left;
+        ry = edge.y - ink_h / 2 - ib.top;
       } else {
-        // Right numbers (h == 2, 3, 4): right edge of text `gap` from right edge.
-        rx = sw - gap - sz.w;
-        ry = edge.y - sz.h / 2;
+        // Right group (h == 2,3,4): visible ink RIGHT sits `gap` from right edge.
+        rx = sw - gap - ib.box_w + ib.right;
+        ry = edge.y - ink_h / 2 - ib.top;
       }
 
-      GRect text_rect = GRect(rx, ry, sz.w + 4, sz.h + 4);
+      GRect text_rect = GRect(rx, ry, ib.box_w, ib.box_h);
       graphics_context_set_text_color(ctx, MONO_COLOR(s_settings.number_color));
       graphics_draw_text(ctx, s_num_strings[h], num_font, text_rect,
-                         GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+                         GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
     }
   }
 }
