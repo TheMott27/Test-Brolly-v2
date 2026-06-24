@@ -576,58 +576,30 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
 
       draw_weather_icon(ctx, gpath_id, ox, oy, icon_sz, MONO_COLOR(s_settings.icon_color));
     } else {
-      // Draw number — position computed purely from screen geometry,
-      // identical to how icons compute their ox/oy origin, so numbers and
-      // icons always occupy the same spot regardless of font or size slider.
+      // Draw number — standard square-face position.
+      // Find where the hour-angle ray hits the screen perimeter, then inset
+      // by a fixed margin so the number sits just inside the edge.
+      int32_t angle = TRIG_MAX_ANGLE * h / 12;
+      GPoint edge = square_perimeter_point(GPoint(sw/2, sh/2), angle, 0, 0);
+
+      // Inset: move the anchor point toward centre by num_inset pixels
+      int num_inset = (sw >= 200) ? 14 : 10;
+      int dx = (sw/2) - edge.x;
+      int dy = (sh/2) - edge.y;
+      int dist = isqrt_int(dx*dx + dy*dy);
+      int cx, cy;
+      if (dist > 0) {
+        cx = edge.x + dx * num_inset / dist;
+        cy = edge.y + dy * num_inset / dist;
+      } else {
+        cx = sw / 2;
+        cy = sh / 2;
+      }
+
+      // Measure text and centre the rect on (cx, cy)
       GSize sz = graphics_text_layout_get_content_size(
         s_num_strings[h], num_font, GRect(0,0,60,60),
         GTextOverflowModeWordWrap, GTextAlignmentCenter);
-
-      bool is_emery_n = (sw >= 200);
-      int bas_margin_n = is_emery_n ? 12 : 6;
-      int cx, cy;
-
-      if (h == 0 || h == 1 || h == 11) {
-        // Top group: Y pinned to bas_margin_n (top edge of slot).
-        // X: h==0 is centred; h==1 and h==11 use the perimeter X of that angle.
-        cy = bas_margin_n + sz.h / 2;
-        if (h == 0) {
-          cx = sw / 2;
-        } else {
-          int32_t angle = TRIG_MAX_ANGLE * h / 12;
-          GPoint edge = square_perimeter_point(GPoint(sw/2, sh/2), angle, 0, 0);
-          cx = edge.x;
-        }
-      } else if (h == 5 || h == 6 || h == 7) {
-        // Bottom group: Y pinned to sh - bas_margin_n (bottom edge of slot).
-        cy = sh - bas_margin_n - sz.h / 2;
-        if (h == 6) {
-          cx = sw / 2;
-        } else {
-          int32_t angle = TRIG_MAX_ANGLE * h / 12;
-          GPoint edge = square_perimeter_point(GPoint(sw/2, sh/2), angle, 0, 0);
-          cx = edge.x;
-        }
-      } else if (h == 8 || h == 9 || h == 10) {
-        // Left group: X pinned to bas_margin_n (left edge of slot).
-        cx = bas_margin_n + sz.w / 2;
-        int y_mid = (sh - 1) / 2;
-        int y_top = bas_margin_n + sz.h / 2;
-        int y_bot = sh - 1 - bas_margin_n - sz.h / 2;
-        if (h == 9)       cy = y_mid;
-        else if (h == 10) cy = (y_top + y_mid) / 2;
-        else              cy = (y_mid + y_bot) / 2;  // h==8
-      } else {
-        // Right group (h==2,3,4): X pinned to sw - bas_margin_n (right edge).
-        cx = sw - bas_margin_n - sz.w / 2;
-        int y_mid = (sh - 1) / 2;
-        int y_top = bas_margin_n + sz.h / 2;
-        int y_bot = sh - 1 - bas_margin_n - sz.h / 2;
-        if (h == 3)      cy = y_mid;
-        else if (h == 2) cy = (y_top + y_mid) / 2;
-        else             cy = (y_mid + y_bot) / 2;  // h==4
-      }
-
       GRect text_rect = GRect(cx - sz.w / 2, cy - sz.h / 2, sz.w + 4, sz.h + 4);
       graphics_context_set_text_color(ctx, MONO_COLOR(s_settings.number_color));
       graphics_draw_text(ctx, s_num_strings[h], num_font, text_rect,
