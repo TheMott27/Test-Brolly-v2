@@ -330,9 +330,10 @@ function sendSettingsToWatch(settings) {
     }
   });
 
-  // Custom location: store locally for weather fetch
+  // Custom location: store locally for weather fetch (trimmed).
+  // The actual fetch is triggered from webviewclosed after this returns.
   if (settings.KEY_CUSTOM_LOCATION !== undefined) {
-    s_customLocation = settings.KEY_CUSTOM_LOCATION;
+    s_customLocation = String(settings.KEY_CUSTOM_LOCATION).trim();
   }
 
   // Test buttons — send directly without saving
@@ -378,13 +379,22 @@ Pebble.addEventListener('webviewclosed', function(e) {
   if (e.response && e.response.length > 0) {
     try {
       var payload = JSON.parse(decodeURIComponent(e.response));
-      sendSettingsToWatch(payload);
-      // Refresh weather if location changed
+
+      // Update custom location BEFORE calling sendSettingsToWatch so that
+      // s_customLocation is already set when doWeatherFetch runs.
       if (payload.KEY_CUSTOM_LOCATION !== undefined) {
-        s_customLocation = payload.KEY_CUSTOM_LOCATION;
-        s_useLatLon = false;
-        doWeatherFetch();
+        s_customLocation = String(payload.KEY_CUSTOM_LOCATION).trim();
+        s_useLatLon = false;  // discard any cached GPS coords
+        s_storedLat = null;
+        s_storedLon = null;
       }
+
+      sendSettingsToWatch(payload);
+
+      // Always re-fetch weather after settings close so a new city name
+      // (or clearing the field to revert to GPS) takes effect immediately.
+      doWeatherFetch();
+
     } catch (err) {
       console.log('Config parse error: ' + err);
     }
