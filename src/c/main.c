@@ -160,6 +160,17 @@ typedef struct {
 } InkBounds;
 static InkBounds s_ink[12];
 static bool s_ink_valid = false;
+// Per-group minimum edge padding: the smallest empty-space value on the
+// screen-facing side across all digits in that group. Used so all numbers
+// in a group share the same perpendicular baseline regardless of glyph shape.
+// top_min = min(ib.top)  for h=11,0,1
+// bot_min = min(ib.bottom) for h=5,6,7
+// lft_min = min(ib.left)  for h=8,9,10
+// rgt_min = min(ib.right) for h=2,3,4
+static int8_t s_ink_top_min = 0;
+static int8_t s_ink_bot_min = 0;
+static int8_t s_ink_lft_min = 0;
+static int8_t s_ink_rgt_min = 0;
 
 // Shake / icon display state
 static bool     s_showing_icons   = false;
@@ -462,21 +473,25 @@ static void draw_inittick_hand(GContext *ctx, GPoint center, GPoint tip,
 // follows, so nothing is visible to the user.
 static void measure_ink_bounds(GContext *ctx, GFont font, int sw, int sh) {
   (void)sw; (void)sh;
-  // Scratch box near top-left, large enough for the biggest number.
-  const int SX = 0, SY = 0, SW = 64, SH = 64;
+  // Scratch box near top-left. Must be large enough for any digit at any size.
+  // We use 80x80 to match the content-size query rect exactly, so that
+  // max_y is always relative to the same origin as box.h.
+  const int SX = 0, SY = 0, SW = 80, SH = 80;
 
   for (int h = 0; h < 12; h++) {
     InkBounds *ib = &s_ink[h];
     ib->valid = false;
 
+    // Query box size using the SAME rect we will draw into.
     GSize box = graphics_text_layout_get_content_size(
-      s_num_strings[h], font, GRect(0, 0, 80, 80),
+      s_num_strings[h], font, GRect(SX, SY, SW, SH),
       GTextOverflowModeWordWrap, GTextAlignmentLeft);
     ib->box_w = (uint8_t)box.w;
     ib->box_h = (uint8_t)box.h;
     if (box.w <= 0 || box.h <= 0) continue;
 
     // Clear scratch area to black, draw the digit in white, top-left aligned.
+    // Draw into the same SW×SH rect so the renderer uses identical metrics.
     graphics_context_set_fill_color(ctx, GColorBlack);
     graphics_fill_rect(ctx, GRect(SX, SY, SW, SH), 0, GCornerNone);
     graphics_context_set_text_color(ctx, GColorWhite);
@@ -488,6 +503,7 @@ static void measure_ink_bounds(GContext *ctx, GFont font, int sw, int sh) {
     GBitmap *fb = graphics_capture_frame_buffer(ctx);
     if (!fb) continue;
 
+    // Scan only within the reported content size (clamped to scratch area).
     int scan_w = box.w; if (scan_w > SW) scan_w = SW;
     int scan_h = box.h; if (scan_h > SH) scan_h = SH;
 
@@ -532,6 +548,32 @@ static void measure_ink_bounds(GContext *ctx, GFont font, int sw, int sh) {
     if (ib->bottom < 0) ib->bottom = 0;
     ib->valid = true;
   }
+
+  // Compute per-group minimum edge padding. All digits in a group share the
+  // same perpendicular baseline: the one set by whichever digit has the LEAST
+  // empty space on the screen-facing side (i.e. whose ink extends furthest
+  // toward the edge). This prevents glyphs with more internal whitespace from
+  // appearing to "float" away from the edge relative to their neighbours.
+  s_ink_top_min = 127;
+  s_ink_bot_min = 127;
+  s_ink_lft_min = 127;
+  s_ink_rgt_min = 127;
+  for (int h = 0; h < 12; h++) {
+    if (!s_ink[h].valid) continue;
+    if (h == 11 || h == 0 || h == 1) {
+      if (s_ink[h].top    < s_ink_top_min) s_ink_top_min = s_ink[h].top;
+    } else if (h == 5 || h == 6 || h == 7) {
+      if (s_ink[h].bottom < s_ink_bot_min) s_ink_bot_min = s_ink[h].bottom;
+    } else if (h == 8 || h == 9 || h == 10) {
+      if (s_ink[h].left   < s_ink_lft_min) s_ink_lft_min = s_ink[h].left;
+    } else {
+      if (s_ink[h].right  < s_ink_rgt_min) s_ink_rgt_min = s_ink[h].right;
+    }
+  }
+  if (s_ink_top_min == 127) s_ink_top_min = 0;
+  if (s_ink_bot_min == 127) s_ink_bot_min = 0;
+  if (s_ink_lft_min == 127) s_ink_lft_min = 0;
+  if (s_ink_rgt_min == 127) s_ink_rgt_min = 0;
 
   // Clear the scratch area so the subsequent normal paint starts clean.
   graphics_context_set_fill_color(ctx, MONO_COLOR(s_settings.background_color));
@@ -720,20 +762,25 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
       int rx, ry;
 
       if (h == 11 || h == 0 || h == 1) {
-        // Top group: visible ink TOP sits `gap` below the top screen edge.
-        ry = gap - ib.top;
+        // Top group: anchor by the digit whose ink starts closest to the top
+        // edge (smallest ib.top = s_ink_top_min). All share that baseline.
+        ry = gap - s_ink_top_min;
         rx = edge.x - ink_w / 2 - ib.left;
       } else if (h == 5 || h == 6 || h == 7) {
-        // Bottom group: visible ink BOTTOM sits `gap` above bottom screen edge.
-        ry = sh - gap - ib.box_h + ib.bottom;
+        // Bottom group: anchor by the digit whose ink extends furthest toward
+        // the bottom edge (smallest ib.bottom = s_ink_bot_min). All digits in
+        // the group share that baseline so none floats above the others.
+        // ink_bottom = ry + ib.box_h - ib.bottom = sh - gap
+        // Using s_ink_bot_min instead of ib.bottom gives a shared ry.
+        ry = sh - gap - ib.box_h + s_ink_bot_min;
         rx = edge.x - ink_w / 2 - ib.left;
       } else if (h == 8 || h == 9 || h == 10) {
-        // Left group: visible ink LEFT sits `gap` right of left screen edge.
-        rx = gap - ib.left;
+        // Left group: anchor by digit whose ink starts closest to left edge.
+        rx = gap - s_ink_lft_min;
         ry = edge.y - ink_h / 2 - ib.top;
       } else {
-        // Right group (h == 2,3,4): visible ink RIGHT sits `gap` from right edge.
-        rx = sw - gap - ib.box_w + ib.right;
+        // Right group (h == 2,3,4): anchor by digit closest to right edge.
+        rx = sw - gap - ib.box_w + s_ink_rgt_min;
         ry = edge.y - ink_h / 2 - ib.top;
       }
 
