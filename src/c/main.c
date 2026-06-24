@@ -256,8 +256,6 @@ static void compute_markers(void) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Font loading
 // ─────────────────────────────────────────────────────────────────────────────
-static const int s_font_sizes[5] = {18, 22, 26, 30, 36};
-
 static uint32_t get_font_resource_id(uint8_t font_id, uint8_t size_idx) {
 #ifdef PBL_PLATFORM_APLITE
   return 0; // Use system font on Aplite
