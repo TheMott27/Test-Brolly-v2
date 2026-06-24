@@ -548,30 +548,31 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
       int8_t icon_code = s_icons[icon_hour];
       GPathIconID gpath_id = icon_code_to_gpath(icon_code);
 
-      // Position icon at same location as number
-      GPoint pos = number_position(h, num_font);
+      // Position icon flush to the nearest screen edge, with the cross-axis
+      // following the hour-angle perimeter ray (same alignment as numbers).
+      int32_t i_angle = TRIG_MAX_ANGLE * h / 12;
+      GPoint i_edge = square_perimeter_point(GPoint(sw/2, sh/2), i_angle, 0, 0);
 
-      // Determine alignment group for icon origin
+      // Baseline gap = 0 so icons touch the edge; adjust later as needed.
+      int icon_gap = 0;
       int ox, oy;
-      bool is_emery = (sw >= 200);
-      int bas_margin = is_emery ? 12 : 6;
 
-      if (h == 0 || h == 1 || h == 11) {
-        // Top group: top edge of icon at bas_margin from top
-        ox = pos.x - icon_sz / 2;
-        oy = bas_margin;
+      if (h == 11 || h == 0 || h == 1) {
+        // Top group: top edge of icon `icon_gap` from top edge.
+        oy = icon_gap;
+        ox = i_edge.x - icon_sz / 2;
       } else if (h == 5 || h == 6 || h == 7) {
-        // Bottom group: bottom edge at bas_margin from bottom
-        ox = pos.x - icon_sz / 2;
-        oy = sh - bas_margin - icon_sz;
+        // Bottom group: bottom edge `icon_gap` from bottom edge.
+        oy = sh - icon_gap - icon_sz;
+        ox = i_edge.x - icon_sz / 2;
       } else if (h == 8 || h == 9 || h == 10) {
-        // Left group: left edge at bas_margin from left
-        ox = bas_margin;
-        oy = pos.y - icon_sz / 2;
+        // Left group: left edge `icon_gap` from left edge.
+        ox = icon_gap;
+        oy = i_edge.y - icon_sz / 2;
       } else {
-        // Right group (h==2,3,4): right edge at bas_margin from right
-        ox = sw - bas_margin - icon_sz;
-        oy = pos.y - icon_sz / 2;
+        // Right group (h==2,3,4): right edge `icon_gap` from right edge.
+        ox = sw - icon_gap - icon_sz;
+        oy = i_edge.y - icon_sz / 2;
       }
 
       draw_weather_icon(ctx, gpath_id, ox, oy, icon_sz, MONO_COLOR(s_settings.icon_color));
@@ -582,8 +583,8 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
       int32_t angle = TRIG_MAX_ANGLE * h / 12;
       GPoint edge = square_perimeter_point(GPoint(sw/2, sh/2), angle, 0, 0);
 
-      // Constant gap between screen edge and the nearest edge of the text box
-      int gap = (sw >= 200) ? 8 : 4;
+      // Baseline gap = 0 so numbers touch the edge; adjust later as needed.
+      int gap = 0;
 
       // Measure text
       GSize sz = graphics_text_layout_get_content_size(
