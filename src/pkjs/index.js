@@ -370,7 +370,7 @@ Pebble.addEventListener('appmessage', function(e) {
 Pebble.addEventListener('showConfiguration', function(e) {
   // Build config URL with current settings as query params
   // The settings page reads these on load
-  var configUrl = 'https://themott27.github.io/Test-Brolly-v2/';
+  var configUrl = 'https://themott27.github.io/Test_Brolly_v2_Settings/';
   Pebble.openURL(configUrl);
 });
 
