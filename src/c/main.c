@@ -732,34 +732,24 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
         // Left group: left edge `icon_gap` from left edge.
         ox = icon_gap;
         {
-          GPoint center_pt = GPoint(sw/2, sh/2);
+          // 25%/75% between rendered centres of 12 and 6 icons
+          int y_12c = icon_gap + icon_sz / 2;
+          int y_6c  = sh - icon_gap - icon_sz / 2;
           int cross_y = i_edge.y;
-          if (h == 10) {
-            GPoint e9  = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 9  / 12, 0, 0);
-            GPoint e11 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 11 / 12, 0, 0);
-            cross_y = (e9.y + e11.y) / 2;
-          } else if (h == 8) {
-            GPoint e7 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 7 / 12, 0, 0);
-            GPoint e9 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 9 / 12, 0, 0);
-            cross_y = (e7.y + e9.y) / 2;
-          }
+          if (h == 10)      cross_y = y_12c + (y_6c - y_12c) * 25 / 100;
+          else if (h == 8)  cross_y = y_12c + (y_6c - y_12c) * 75 / 100;
           oy = cross_y - icon_sz / 2;
         }
       } else {
         // Right group (h==2,3,4): right edge `icon_gap` from right edge.
         ox = sw - icon_gap - icon_sz;
         {
-          GPoint center_pt = GPoint(sw/2, sh/2);
+          // 25%/75% between rendered centres of 12 and 6 icons
+          int y_12c = icon_gap + icon_sz / 2;
+          int y_6c  = sh - icon_gap - icon_sz / 2;
           int cross_y = i_edge.y;
-          if (h == 2) {
-            GPoint e1 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 1 / 12, 0, 0);
-            GPoint e3 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 3 / 12, 0, 0);
-            cross_y = (e1.y + e3.y) / 2;
-          } else if (h == 4) {
-            GPoint e3 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 3 / 12, 0, 0);
-            GPoint e5 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 5 / 12, 0, 0);
-            cross_y = (e3.y + e5.y) / 2;
-          }
+          if (h == 2)      cross_y = y_12c + (y_6c - y_12c) * 25 / 100;
+          else if (h == 4) cross_y = y_12c + (y_6c - y_12c) * 75 / 100;
           oy = cross_y - icon_sz / 2;
         }
       }
@@ -817,17 +807,14 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
         // per-digit SDK box width variation (fixes Digital 10 not at edge).
         rx = gap - ib.left;
         {
-          GPoint center_pt = GPoint(sw/2, sh/2);
+          // 25%/75% between rendered ink centres of 12 and 6
+          InkBounds ib12 = s_ink[0];  // h==0 is "12"
+          InkBounds ib6  = s_ink[6];  // h==6 is "6"
+          int y_12c = gap + (ib12.box_h - ib12.top - ib12.bottom) / 2;
+          int y_6c  = sh - gap - (ib6.box_h - ib6.top - ib6.bottom) / 2;
           int cross_y = edge.y;
-          if (h == 10) {
-            GPoint e9  = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 9  / 12, 0, 0);
-            GPoint e11 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 11 / 12, 0, 0);
-            cross_y = (e9.y + e11.y) / 2;
-          } else if (h == 8) {
-            GPoint e7 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 7 / 12, 0, 0);
-            GPoint e9 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 9 / 12, 0, 0);
-            cross_y = (e7.y + e9.y) / 2;
-          }
+          if (h == 10)      cross_y = y_12c + (y_6c - y_12c) * 25 / 100;
+          else if (h == 8)  cross_y = y_12c + (y_6c - y_12c) * 75 / 100;
           ry = cross_y - ink_h / 2 - ib.top;
         }
       } else {
@@ -835,17 +822,14 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
         // Use group max box_w for consistent rx.
         rx = sw - gap - 80 + ib.right;
         {
-          GPoint center_pt = GPoint(sw/2, sh/2);
+          // 25%/75% between rendered ink centres of 12 and 6
+          InkBounds ib12 = s_ink[0];  // h==0 is "12"
+          InkBounds ib6  = s_ink[6];  // h==6 is "6"
+          int y_12c = gap + (ib12.box_h - ib12.top - ib12.bottom) / 2;
+          int y_6c  = sh - gap - (ib6.box_h - ib6.top - ib6.bottom) / 2;
           int cross_y = edge.y;
-          if (h == 2) {
-            GPoint e1 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 1 / 12, 0, 0);
-            GPoint e3 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 3 / 12, 0, 0);
-            cross_y = (e1.y + e3.y) / 2;
-          } else if (h == 4) {
-            GPoint e3 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 3 / 12, 0, 0);
-            GPoint e5 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 5 / 12, 0, 0);
-            cross_y = (e3.y + e5.y) / 2;
-          }
+          if (h == 2)      cross_y = y_12c + (y_6c - y_12c) * 25 / 100;
+          else if (h == 4) cross_y = y_12c + (y_6c - y_12c) * 75 / 100;
           ry = cross_y - ink_h / 2 - ib.top;
         }
       }
