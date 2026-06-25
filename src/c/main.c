@@ -382,15 +382,20 @@ static GPoint number_position(int h, GFont font) {
   int actual_w = sz.w;
   int actual_h = sz.h;
 
+  int extra_top = (s_settings.number_font == 0) ? 7 : 0;
   int y_top = margin + actual_h / 2;
   int y_mid = (sh - 1) / 2;
   int y_bot = (sh - 1 - margin) - actual_h / 2;
+  // Actual rendered centre of 12 and 6 (used for 25%/75% positioning of 2/4/8/10)
+  int y_12 = y_top + extra_top;  // centre of number 12
+  int y_6  = y_bot;              // centre of number 6
+  int y_25 = y_12 + (y_6 - y_12) * 25 / 100;  // 25% between 12 and 6
+  int y_75 = y_12 + (y_6 - y_12) * 75 / 100;  // 75% between 12 and 6
 
   GPoint pos = GPoint(sw / 2, sh / 2);
 
   if (h == 0 || h == 1 || h == 11) {
     // Top edge
-    int extra_top = (s_settings.number_font == 0) ? 7 : 0;
     pos.y = margin + actual_h / 2 + extra_top;
     if (h == 0) {
       pos.x = sw / 2;
@@ -416,14 +421,14 @@ static GPoint number_position(int h, GFont font) {
     // Left edge
     pos.x = margin;
     if (h == 9)       pos.y = y_mid;
-    else if (h == 10) pos.y = sh / 4 + y_top;   // 25% + centre-of-12
-    else              pos.y = sh * 3 / 4 - y_top; // 75% - centre-of-12 (h==8)
+    else if (h == 10) pos.y = y_25;  // 25% between 12 and 6
+    else              pos.y = y_75;  // 75% between 12 and 6 (h==8)
   } else {
     // Right edge (h == 2, 3, 4)
     pos.x = sw - 1 - margin;
     if (h == 3)      pos.y = y_mid;
-    else if (h == 2) pos.y = sh / 4 + y_top;   // 25% + centre-of-12
-    else             pos.y = sh * 3 / 4 - y_top; // 75% - centre-of-12 (h==4)
+    else if (h == 2) pos.y = y_25;  // 25% between 12 and 6
+    else             pos.y = y_75;  // 75% between 12 and 6 (h==4)
   }
 
   return pos;
