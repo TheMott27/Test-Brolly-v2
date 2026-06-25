@@ -171,6 +171,13 @@ static int8_t s_ink_top_min = 0;
 static int8_t s_ink_bot_min = 0;
 static int8_t s_ink_lft_min = 0;
 static int8_t s_ink_rgt_min = 0;
+// Per-group max box dimension on the perpendicular axis. Ensures all
+// digits in a group use the same box size for the edge-anchor formula,
+// so varying SDK box heights/widths do not shift individual digits.
+static uint8_t s_ink_top_box_h = 0; // max box_h for top group (h=11,0,1)
+static uint8_t s_ink_bot_box_h = 0; // max box_h for bottom group (h=5,6,7)
+static uint8_t s_ink_lft_box_w = 0; // max box_w for left group (h=8,9,10)
+static uint8_t s_ink_rgt_box_w = 0; // max box_w for right group (h=2,3,4)
 
 // Shake / icon display state
 static bool     s_showing_icons   = false;
@@ -554,20 +561,24 @@ static void measure_ink_bounds(GContext *ctx, GFont font, int sw, int sh) {
   // empty space on the screen-facing side (i.e. whose ink extends furthest
   // toward the edge). This prevents glyphs with more internal whitespace from
   // appearing to "float" away from the edge relative to their neighbours.
-  s_ink_top_min = 127;
-  s_ink_bot_min = 127;
-  s_ink_lft_min = 127;
-  s_ink_rgt_min = 127;
+  s_ink_top_min = 127;  s_ink_top_box_h = 0;
+  s_ink_bot_min = 127;  s_ink_bot_box_h = 0;
+  s_ink_lft_min = 127;  s_ink_lft_box_w = 0;
+  s_ink_rgt_min = 127;  s_ink_rgt_box_w = 0;
   for (int h = 0; h < 12; h++) {
     if (!s_ink[h].valid) continue;
     if (h == 11 || h == 0 || h == 1) {
       if (s_ink[h].top    < s_ink_top_min) s_ink_top_min = s_ink[h].top;
+      if (s_ink[h].box_h  > s_ink_top_box_h) s_ink_top_box_h = s_ink[h].box_h;
     } else if (h == 5 || h == 6 || h == 7) {
       if (s_ink[h].bottom < s_ink_bot_min) s_ink_bot_min = s_ink[h].bottom;
+      if (s_ink[h].box_h  > s_ink_bot_box_h) s_ink_bot_box_h = s_ink[h].box_h;
     } else if (h == 8 || h == 9 || h == 10) {
       if (s_ink[h].left   < s_ink_lft_min) s_ink_lft_min = s_ink[h].left;
+      if (s_ink[h].box_w  > s_ink_lft_box_w) s_ink_lft_box_w = s_ink[h].box_w;
     } else {
       if (s_ink[h].right  < s_ink_rgt_min) s_ink_rgt_min = s_ink[h].right;
+      if (s_ink[h].box_w  > s_ink_rgt_box_w) s_ink_rgt_box_w = s_ink[h].box_w;
     }
   }
   if (s_ink_top_min == 127) s_ink_top_min = 0;
@@ -704,8 +715,8 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
       int32_t i_angle = TRIG_MAX_ANGLE * h / 12;
       GPoint i_edge = square_perimeter_point(GPoint(sw/2, sh/2), i_angle, 0, 0);
 
-      // Baseline gap = 0 so icons touch the edge; adjust later as needed.
-      int icon_gap = 0;
+      // Gap from screen edge to icon edge. Matches number gap to clear markers.
+      int icon_gap = 6;
       int ox, oy;
 
       if (h == 11 || h == 0 || h == 1) {
@@ -753,8 +764,9 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
       if (ink_w < 1) ink_w = 1;
       if (ink_h < 1) ink_h = 1;
 
-      // Baseline gap = 0 so the visible ink touches the edge; tune later.
-      int gap = 0;
+      // Gap from screen edge to visible ink. Must clear the longest marker
+      // (4px on Basalt quarter-hour, 10px on Emery) plus a small margin.
+      int gap = 6;
 
       // Top-left corner of the (untrimmed) text box. We position so that the
       // visible ink edge sits `gap` from the screen edge, and the ink centre
@@ -762,25 +774,26 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
       int rx, ry;
 
       if (h == 11 || h == 0 || h == 1) {
-        // Top group: anchor by the digit whose ink starts closest to the top
-        // edge (smallest ib.top = s_ink_top_min). All share that baseline.
+        // Top group: shared baseline = digit with smallest ib.top.
+        // All digits use the group max box_h so the box origin is consistent.
         ry = gap - s_ink_top_min;
         rx = edge.x - ink_w / 2 - ib.left;
       } else if (h == 5 || h == 6 || h == 7) {
-        // Bottom group: anchor by the digit whose ink extends furthest toward
-        // the bottom edge (smallest ib.bottom = s_ink_bot_min). All digits in
-        // the group share that baseline so none floats above the others.
-        // ink_bottom = ry + ib.box_h - ib.bottom = sh - gap
-        // Using s_ink_bot_min instead of ib.bottom gives a shared ry.
-        ry = sh - gap - ib.box_h + s_ink_bot_min;
+        // Bottom group: shared baseline = digit with smallest ib.bottom.
+        // Use group max box_h so all digits share the same ry regardless of
+        // per-digit SDK box height variation (fixes Thin 5/7 too low).
+        ry = sh - gap - s_ink_bot_box_h + s_ink_bot_min;
         rx = edge.x - ink_w / 2 - ib.left;
       } else if (h == 8 || h == 9 || h == 10) {
-        // Left group: anchor by digit whose ink starts closest to left edge.
+        // Left group: shared baseline = digit with smallest ib.left.
+        // Use group max box_w so all digits share the same rx regardless of
+        // per-digit SDK box width variation (fixes Digital 10 not at edge).
         rx = gap - s_ink_lft_min;
         ry = edge.y - ink_h / 2 - ib.top;
       } else {
-        // Right group (h == 2,3,4): anchor by digit closest to right edge.
-        rx = sw - gap - ib.box_w + s_ink_rgt_min;
+        // Right group: shared baseline = digit with smallest ib.right.
+        // Use group max box_w for consistent rx.
+        rx = sw - gap - s_ink_rgt_box_w + s_ink_rgt_min;
         ry = edge.y - ink_h / 2 - ib.top;
       }
 
