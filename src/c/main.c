@@ -489,16 +489,17 @@ static void measure_ink_bounds(GContext *ctx, GFont font, int sw, int sh) {
     InkBounds *ib = &s_ink[h];
     ib->valid = false;
 
-    // Query box size using the SAME rect we will draw into.
-    GSize box = graphics_text_layout_get_content_size(
-      s_num_strings[h], font, GRect(SX, SY, SW, SH),
-      GTextOverflowModeWordWrap, GTextAlignmentLeft);
-    ib->box_w = (uint8_t)box.w;
-    ib->box_h = (uint8_t)box.h;
-    if (box.w <= 0 || box.h <= 0) continue;
+    // Use the full SW×SH scratch area as both the draw rect and the scan
+    // region. The SDK's graphics_text_layout_get_content_size can return
+    // a box.h smaller than the actual rendered pixels for some glyphs
+    // (e.g. Raleway-Light "5"/"7"), causing those digits to be placed
+    // lower than "6". By scanning the full area and using SW/SH as the
+    // reference box, all digits share the same fixed frame and the
+    // padding values are directly comparable across glyphs.
+    ib->box_w = (uint8_t)SW;
+    ib->box_h = (uint8_t)SH;
 
-    // Clear scratch area to black, draw the digit in white, top-left aligned.
-    // Draw into the same SW×SH rect so the renderer uses identical metrics.
+    // Clear scratch area, draw digit in white, top-left aligned.
     graphics_context_set_fill_color(ctx, GColorBlack);
     graphics_fill_rect(ctx, GRect(SX, SY, SW, SH), 0, GCornerNone);
     graphics_context_set_text_color(ctx, GColorWhite);
@@ -506,19 +507,15 @@ static void measure_ink_bounds(GContext *ctx, GFont font, int sw, int sh) {
                        GRect(SX, SY, SW, SH),
                        GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
 
-    // Capture and scan the framebuffer for lit pixels within the box region.
+    // Capture and scan the full SW×SH area.
     GBitmap *fb = graphics_capture_frame_buffer(ctx);
     if (!fb) continue;
 
-    // Scan only within the reported content size (clamped to scratch area).
-    int scan_w = box.w; if (scan_w > SW) scan_w = SW;
-    int scan_h = box.h; if (scan_h > SH) scan_h = SH;
+    int min_x = SW, min_y = SH, max_x = -1, max_y = -1;
 
-    int min_x = scan_w, min_y = scan_h, max_x = -1, max_y = -1;
-
-    for (int y = 0; y < scan_h; y++) {
+    for (int y = 0; y < SH; y++) {
       GBitmapDataRowInfo row = gbitmap_get_data_row_info(fb, SY + y);
-      for (int x = 0; x < scan_w; x++) {
+      for (int x = 0; x < SW; x++) {
         int px = SX + x;
         if (px < row.min_x || px > row.max_x) continue;
         bool lit;
@@ -540,17 +537,17 @@ static void measure_ink_bounds(GContext *ctx, GFont font, int sw, int sh) {
     graphics_release_frame_buffer(ctx, fb);
 
     if (max_x < 0) {
-      // No ink found (shouldn't happen) — fall back to zero padding.
+      // No ink found â fall back to zero padding.
       ib->left = ib->top = ib->right = ib->bottom = 0;
       ib->valid = true;
       continue;
     }
 
-    // Padding inside the measured text box on each side.
+    // Padding from each side of the SWÃSH scratch box to the ink edge.
     ib->left   = (int8_t)min_x;
     ib->top    = (int8_t)min_y;
-    ib->right  = (int8_t)(box.w - 1 - max_x);
-    ib->bottom = (int8_t)(box.h - 1 - max_y);
+    ib->right  = (int8_t)(SW - 1 - max_x);
+    ib->bottom = (int8_t)(SH - 1 - max_y);
     if (ib->right  < 0) ib->right  = 0;
     if (ib->bottom < 0) ib->bottom = 0;
     ib->valid = true;
@@ -782,7 +779,7 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
         // Bottom group: shared baseline = digit with smallest ib.bottom.
         // Use group max box_h so all digits share the same ry regardless of
         // per-digit SDK box height variation (fixes Thin 5/7 too low).
-        ry = sh - gap - s_ink_bot_box_h + s_ink_bot_min;
+        ry = sh - gap - 80 + s_ink_bot_min;
         rx = edge.x - ink_w / 2 - ib.left;
       } else if (h == 8 || h == 9 || h == 10) {
         // Left group: shared baseline = digit with smallest ib.left.
@@ -793,11 +790,11 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
       } else {
         // Right group: shared baseline = digit with smallest ib.right.
         // Use group max box_w for consistent rx.
-        rx = sw - gap - s_ink_rgt_box_w + s_ink_rgt_min;
+        rx = sw - gap - 80 + s_ink_rgt_min;
         ry = edge.y - ink_h / 2 - ib.top;
       }
 
-      GRect text_rect = GRect(rx, ry, ib.box_w, ib.box_h);
+      GRect text_rect = GRect(rx, ry, 80, 80);
       graphics_context_set_text_color(ctx, MONO_COLOR(s_settings.number_color));
       graphics_draw_text(ctx, s_num_strings[h], num_font, text_rect,
                          GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
