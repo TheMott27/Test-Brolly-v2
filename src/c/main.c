@@ -773,24 +773,24 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
       if (h == 11 || h == 0 || h == 1) {
         // Top group: shared baseline = digit with smallest ib.top.
         // All digits use the group max box_h so the box origin is consistent.
-        ry = gap - s_ink_top_min;
+        ry = gap - ib.top;
         rx = edge.x - ink_w / 2 - ib.left;
       } else if (h == 5 || h == 6 || h == 7) {
         // Bottom group: shared baseline = digit with smallest ib.bottom.
         // Use group max box_h so all digits share the same ry regardless of
         // per-digit SDK box height variation (fixes Thin 5/7 too low).
-        ry = sh - gap - 80 + s_ink_bot_min;
+        ry = sh - gap - 80 + ib.bottom;
         rx = edge.x - ink_w / 2 - ib.left;
       } else if (h == 8 || h == 9 || h == 10) {
         // Left group: shared baseline = digit with smallest ib.left.
         // Use group max box_w so all digits share the same rx regardless of
         // per-digit SDK box width variation (fixes Digital 10 not at edge).
-        rx = gap - s_ink_lft_min;
+        rx = gap - ib.left;
         ry = edge.y - ink_h / 2 - ib.top;
       } else {
         // Right group: shared baseline = digit with smallest ib.right.
         // Use group max box_w for consistent rx.
-        rx = sw - gap - 80 + s_ink_rgt_min;
+        rx = sw - gap - 80 + ib.right;
         ry = edge.y - ink_h / 2 - ib.top;
       }
 
