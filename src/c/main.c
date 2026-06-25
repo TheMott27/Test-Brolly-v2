@@ -620,6 +620,7 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
   }
 
   // Sunrise / sunset markers
+  int sun_inset = (sw >= 200) ? 8 : 5;
   bool show_sun_markers = false;
   if (s_settings.sunrise_marker_visible == 0) {
     show_sun_markers = true;
@@ -629,8 +630,6 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
   // else 2 = Off
 
   if (show_sun_markers) {
-    bool is_emery = (sw >= 200);
-    int sun_inset = is_emery ? 8 : 5;
 
     // Sunrise marker
     int sr_total_min = s_sunrise_hour * 60 + s_sunrise_min;
@@ -713,7 +712,7 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
       GPoint i_edge = square_perimeter_point(GPoint(sw/2, sh/2), i_angle, 0, 0);
 
       // Gap from screen edge to icon edge. Matches number gap to clear markers.
-      int icon_gap = 6;
+      int icon_gap = sun_inset * 3 / 2;
       int ox, oy;
 
       if (h == 11 || h == 0 || h == 1) {
@@ -727,11 +726,37 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
       } else if (h == 8 || h == 9 || h == 10) {
         // Left group: left edge `icon_gap` from left edge.
         ox = icon_gap;
-        oy = i_edge.y - icon_sz / 2;
+        {
+          GPoint center_pt = GPoint(sw/2, sh/2);
+          int cross_y = i_edge.y;
+          if (h == 10) {
+            GPoint e9  = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 9  / 12, 0, 0);
+            GPoint e11 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 11 / 12, 0, 0);
+            cross_y = (e9.y + e11.y) / 2;
+          } else if (h == 8) {
+            GPoint e7 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 7 / 12, 0, 0);
+            GPoint e9 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 9 / 12, 0, 0);
+            cross_y = (e7.y + e9.y) / 2;
+          }
+          oy = cross_y - icon_sz / 2;
+        }
       } else {
         // Right group (h==2,3,4): right edge `icon_gap` from right edge.
         ox = sw - icon_gap - icon_sz;
-        oy = i_edge.y - icon_sz / 2;
+        {
+          GPoint center_pt = GPoint(sw/2, sh/2);
+          int cross_y = i_edge.y;
+          if (h == 2) {
+            GPoint e1 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 1 / 12, 0, 0);
+            GPoint e3 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 3 / 12, 0, 0);
+            cross_y = (e1.y + e3.y) / 2;
+          } else if (h == 4) {
+            GPoint e3 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 3 / 12, 0, 0);
+            GPoint e5 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 5 / 12, 0, 0);
+            cross_y = (e3.y + e5.y) / 2;
+          }
+          oy = cross_y - icon_sz / 2;
+        }
       }
 
       draw_weather_icon(ctx, gpath_id, ox, oy, icon_sz, MONO_COLOR(s_settings.icon_color));
@@ -763,7 +788,7 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
 
       // Gap from screen edge to visible ink. Must clear the longest marker
       // (4px on Basalt quarter-hour, 10px on Emery) plus a small margin.
-      int gap = 6;
+      int gap = sun_inset * 3 / 2;
 
       // Top-left corner of the (untrimmed) text box. We position so that the
       // visible ink edge sits `gap` from the screen edge, and the ink centre
@@ -786,12 +811,38 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
         // Use group max box_w so all digits share the same rx regardless of
         // per-digit SDK box width variation (fixes Digital 10 not at edge).
         rx = gap - ib.left;
-        ry = edge.y - ink_h / 2 - ib.top;
+        {
+          GPoint center_pt = GPoint(sw/2, sh/2);
+          int cross_y = edge.y;
+          if (h == 10) {
+            GPoint e9  = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 9  / 12, 0, 0);
+            GPoint e11 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 11 / 12, 0, 0);
+            cross_y = (e9.y + e11.y) / 2;
+          } else if (h == 8) {
+            GPoint e7 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 7 / 12, 0, 0);
+            GPoint e9 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 9 / 12, 0, 0);
+            cross_y = (e7.y + e9.y) / 2;
+          }
+          ry = cross_y - ink_h / 2 - ib.top;
+        }
       } else {
         // Right group: shared baseline = digit with smallest ib.right.
         // Use group max box_w for consistent rx.
         rx = sw - gap - 80 + ib.right;
-        ry = edge.y - ink_h / 2 - ib.top;
+        {
+          GPoint center_pt = GPoint(sw/2, sh/2);
+          int cross_y = edge.y;
+          if (h == 2) {
+            GPoint e1 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 1 / 12, 0, 0);
+            GPoint e3 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 3 / 12, 0, 0);
+            cross_y = (e1.y + e3.y) / 2;
+          } else if (h == 4) {
+            GPoint e3 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 3 / 12, 0, 0);
+            GPoint e5 = square_perimeter_point(center_pt, TRIG_MAX_ANGLE * 5 / 12, 0, 0);
+            cross_y = (e3.y + e5.y) / 2;
+          }
+          ry = cross_y - ink_h / 2 - ib.top;
+        }
       }
 
       GRect text_rect = GRect(rx, ry, 80, 80);
