@@ -416,14 +416,14 @@ static GPoint number_position(int h, GFont font) {
     // Left edge
     pos.x = margin;
     if (h == 9)       pos.y = y_mid;
-    else if (h == 10) pos.y = (y_top + y_mid) / 2;
-    else              pos.y = (y_mid + y_bot) / 2;  // h==8
+    else if (h == 10) pos.y = sh / 4 + y_top;   // 25% + centre-of-12
+    else              pos.y = sh * 3 / 4 - y_top; // 75% - centre-of-12 (h==8)
   } else {
     // Right edge (h == 2, 3, 4)
     pos.x = sw - 1 - margin;
     if (h == 3)      pos.y = y_mid;
-    else if (h == 2) pos.y = (y_top + y_mid) / 2;
-    else             pos.y = (y_mid + y_bot) / 2;  // h==4
+    else if (h == 2) pos.y = sh / 4 + y_top;   // 25% + centre-of-12
+    else             pos.y = sh * 3 / 4 - y_top; // 75% - centre-of-12 (h==4)
   }
 
   return pos;
@@ -1293,6 +1293,15 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
     s_bt_connected = false;
     layer_mark_dirty(s_minute_layer);
     s_bt_connected = saved;
+  }
+
+  t = dict_find(iter, 146); // KEY_TEST_CRITICAL_BATTERY_ALERT
+  if (t && t->value->int32) {
+    // Temporarily show critical battery alert (below center threshold)
+    uint8_t saved = s_battery_pct;
+    s_battery_pct = 1;
+    layer_mark_dirty(s_minute_layer);
+    s_battery_pct = saved;
   }
 
   t = dict_find(iter, 147); // KEY_SUNRISE_MARKER_VISIBLE
