@@ -724,10 +724,14 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
         // Top group: top edge of icon `icon_gap` from top edge.
         oy = icon_gap;
         ox = i_edge.x - icon_sz / 2;
+        if (h == 11) ox += icon_sz / 2;   // shift 11 right by half width
+        if (h == 1)  ox -= icon_sz / 2;   // shift 1 left by half width
       } else if (h == 5 || h == 6 || h == 7) {
         // Bottom group: bottom edge `icon_gap` from bottom edge.
         oy = sh - icon_gap - icon_sz;
         ox = i_edge.x - icon_sz / 2;
+        if (h == 7) ox += icon_sz / 2;   // shift 7 right by half width
+        if (h == 5) ox -= icon_sz / 2;   // shift 5 left by half width
       } else if (h == 8 || h == 9 || h == 10) {
         // Left group: left edge `icon_gap` from left edge.
         ox = icon_gap;
@@ -795,12 +799,16 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
         // All digits use the group max box_h so the box origin is consistent.
         ry = gap - ib.top;
         rx = edge.x - ink_w / 2 - ib.left;
+        if (h == 11) rx += ink_w / 2;   // shift 11 right by half ink width
+        if (h == 1)  rx -= ink_w / 2;   // shift 1 left by half ink width
       } else if (h == 5 || h == 6 || h == 7) {
         // Bottom group: shared baseline = digit with smallest ib.bottom.
         // Use group max box_h so all digits share the same ry regardless of
         // per-digit SDK box height variation (fixes Thin 5/7 too low).
         ry = sh - gap - 80 + ib.bottom;
         rx = edge.x - ink_w / 2 - ib.left;
+        if (h == 7) rx += ink_w / 2;   // shift 7 right by half ink width
+        if (h == 5) rx -= ink_w / 2;   // shift 5 left by half ink width
       } else if (h == 8 || h == 9 || h == 10) {
         // Left group: shared baseline = digit with smallest ib.left.
         // Use group max box_w so all digits share the same rx regardless of
