@@ -799,8 +799,14 @@ static void bg_layer_update(Layer *layer, GContext *ctx) {
         // All digits use the group max box_h so the box origin is consistent.
         ry = gap - ib.top;
         rx = edge.x - ink_w / 2 - ib.left;
-        if (h == 11) rx += ink_w / 2;   // shift 11 right by half ink width
-        if (h == 1)  rx -= ink_w / 2;   // shift 1 left by half ink width
+        if (h == 11) rx += ink_w / 2;   // shift 11 right by half its own ink width
+        if (h == 1) {
+          // shift 1 left by half of 11's ink width
+          InkBounds ib11 = s_ink[11];
+          int ink_w_11 = ib11.box_w - ib11.left - ib11.right;
+          if (ink_w_11 < 1) ink_w_11 = 1;
+          rx -= ink_w_11 / 2;
+        }
       } else if (h == 5 || h == 6 || h == 7) {
         // Bottom group: shared baseline = digit with smallest ib.bottom.
         // Use group max box_h so all digits share the same ry regardless of
